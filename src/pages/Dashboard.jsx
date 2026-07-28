@@ -9,6 +9,8 @@ import AdminSettings from './AdminSettings'
 import LimitWarningBanner from './LimitWarningBanner'
 import PlannedPayments from './PlannedPayments'
 import ActivityFeed from './ActivityFeed'
+import MemberBalanceTransfer from './MemberBalanceTransfer'
+import NotificationBell from './NotificationBell'
 import { getMemberSpend } from '../lib/spendingLimits'
 import { getFamilyBudgetSpend } from '../lib/budgets'
 import { isAdmin, isSuperadmin } from '../lib/roles'
@@ -34,6 +36,7 @@ export default function Dashboard({ familyId }) {
   const [breakdown, setBreakdown] = useState([])
   const [plannedPayments, setPlannedPayments] = useState([])
   const [activity, setActivity] = useState([])
+  const [notifications, setNotifications] = useState([])
   const [view, setView] = useState('home') // 'home' | 'settings'
 
   // Kept in refs so the realtime callback (registered once) can look up
@@ -144,6 +147,19 @@ export default function Dashboard({ familyId }) {
     setPlannedPayments(data || [])
   }
 
+  // Only admins/superadmins can actually read rows here (RLS) — for a
+  // regular member this just resolves to an empty list, which is fine since
+  // only admins render the NotificationBell.
+  async function loadNotifications() {
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('family_id', familyId)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setNotifications(data || [])
+  }
+
   useEffect(() => {
     let cancelled = false
     async function loadAll() {
@@ -153,7 +169,8 @@ export default function Dashboard({ familyId }) {
         loadCategories(),
         loadTransactions(),
         loadBreakdown(),
-        loadPlannedPayments()
+        loadPlannedPayments(),
+        loadNotifications()
       ])
     }
     if (!cancelled) loadAll()
@@ -214,6 +231,21 @@ export default function Dashboard({ familyId }) {
         { event: '*', schema: 'public', table: 'planned_payments', filter: `family_id=eq.${familyId}` },
         loadPlannedPayments
       )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `family_id=eq.${familyId}` },
+        loadNotifications
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'member_balance_transfers',
+          filter: `family_id=eq.${familyId}`
+        },
+        loadFamilyAndMembers // members.balance changed — refresh members
+      )
       .subscribe()
 
     return () => {
@@ -228,6 +260,12 @@ export default function Dashboard({ familyId }) {
   const amAdmin = isAdmin(myRole)
   const amSuperadmin = isSuperadmin(myRole)
 
+  // How much of the family's actual cash isn't yet allocated to any
+  // member's own live balance — shown as a guardrail so members can see
+  // what's actually available to transfer into their balance.
+  const totalAllocated = members.reduce((sum, m) => sum + Number(m.balance || 0), 0)
+  const unallocated = wallet ? Number(wallet.balance_cache) - totalAllocated : null
+
   if (view === 'settings' && amAdmin) {
     return (
       <div className="dashboard">
@@ -236,7 +274,12 @@ export default function Dashboard({ familyId }) {
             &larr; Back
           </button>
           <h1>Settings</h1>
-          <span />
+          {myMember && (
+            <span className="user-chip">
+              <span className="user-chip-name">{myMember.display_name}</span>
+              <span className={`badge ${myMember.role}`}>{myMember.role}</span>
+            </span>
+          )}
         </header>
 
         <section className="card">
@@ -281,16 +324,32 @@ export default function Dashboard({ familyId }) {
           <h1>{family.name}</h1>
           <p className="subtitle">Base currency: {family.base_currency}</p>
         </div>
-        {amAdmin && (
-          <button
-            type="button"
-            className="settings-btn"
-            aria-label="Settings"
-            onClick={() => setView('settings')}
-          >
-            Settings
-          </button>
-        )}
+        <div className="header-actions">
+          {amAdmin && (
+            <NotificationBell
+              familyId={familyId}
+              userId={session.user.id}
+              notifications={notifications}
+              members={members}
+            />
+          )}
+          {amAdmin && (
+            <button
+              type="button"
+              className="settings-btn"
+              aria-label="Settings"
+              onClick={() => setView('settings')}
+            >
+              Settings
+            </button>
+          )}
+          {myMember && (
+            <span className="user-chip">
+              <span className="user-chip-name">{myMember.display_name}</span>
+              <span className={`badge ${myMember.role}`}>{myMember.role}</span>
+            </span>
+          )}
+        </div>
       </header>
 
       <LimitWarningBanner spend={mySpend} baseCurrency={family.base_currency} />
@@ -301,7 +360,28 @@ export default function Dashboard({ familyId }) {
           {wallet ? Number(wallet.balance_cache).toFixed(2) : '--'} {family.base_currency}
         </p>
         <p className="hint">Actual cash: total deposited minus total spent, live-synced.</p>
+        {unallocated !== null && (
+          <p className="hint">
+            {unallocated.toFixed(2)} {family.base_currency} not yet allocated to any member's balance.
+          </p>
+        )}
       </section>
+
+      {myMember && (
+        <section className="card">
+          <h2>My Balance</h2>
+          <p className="balance">
+            {Number(myMember.balance || 0).toFixed(2)} {family.base_currency}
+          </p>
+          <p className="hint">Your own share, moved out of the family balance. Spending draws from this.</p>
+          <MemberBalanceTransfer
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            onDone={loadFamilyAndMembers}
+          />
+        </section>
+      )}
 
       {familyBudgetSpend && (
         <section className="card">
@@ -439,7 +519,12 @@ export default function Dashboard({ familyId }) {
           {members.map((m) => (
             <li key={m.id}>
               <span>{m.display_name}</span>
-              <span className={`badge ${m.role}`}>{m.role}</span>
+              <span className="member-list-right">
+                <span className="member-balance">
+                  {Number(m.balance || 0).toFixed(2)} {family.base_currency}
+                </span>
+                <span className={`badge ${m.role}`}>{m.role}</span>
+              </span>
             </li>
           ))}
         </ul>
