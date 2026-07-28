@@ -136,6 +136,35 @@ create table if not exists planned_payments (
   created_at timestamptz not null default now()
 );
 
+-- Per-member live balance: an amount allocated to a member out of the
+-- family's shared cash (wallets.balance_cache), separate from the
+-- spending_limit_amount threshold above. Only ever changed by the
+-- recalc_member_balance() trigger function below — never written to
+-- directly by the app (enforced by trg_prevent_balance_tampering).
+alter table members add column if not exists balance numeric not null default 0;
+
+-- Records a member moving money from the shared family balance into their
+-- own live balance (self-serve; always immediate, no approval step).
+create table if not exists member_balance_transfers (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  created_at timestamptz not null default now()
+);
+
+-- Lightweight in-app notification log. Currently only used to tell
+-- admins/superadmins when a member tops up their own balance, but kept
+-- general (a "type" column) in case other notification kinds are added.
+create table if not exists notifications (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  type text not null,
+  member_id uuid references members(id) on delete cascade,
+  amount numeric,
+  created_at timestamptz not null default now()
+);
+
 -- ============================================================
 -- 2. HELPER FUNCTIONS (avoid recursive RLS lookups)
 -- ============================================================
@@ -190,6 +219,8 @@ alter table transactions enable row level security;
 alter table exchange_rate_overrides enable row level security;
 alter table family_invites enable row level security;
 alter table planned_payments enable row level security;
+alter table member_balance_transfers enable row level security;
+alter table notifications enable row level security;
 
 -- families: readable/writable only if you're a member of it
 drop policy if exists "families_select" on families;
@@ -338,6 +369,25 @@ create policy "planned_payments_delete" on planned_payments
     or is_admin(family_id)
   );
 
+-- member_balance_transfers: readable by family; a member can only insert a
+-- transfer into their OWN balance (self-serve top-up, no approval gate).
+drop policy if exists "member_transfers_select" on member_balance_transfers;
+create policy "member_transfers_select" on member_balance_transfers
+  for select using (family_id in (select my_family_ids()));
+
+drop policy if exists "member_transfers_insert_self" on member_balance_transfers;
+create policy "member_transfers_insert_self" on member_balance_transfers
+  for insert with check (
+    family_id in (select my_family_ids())
+    and member_id in (select id from members where user_id = auth.uid())
+  );
+
+-- notifications: admins/superadmins only (that's who needs to see a member
+-- topped up their balance). Rows are only ever written by the trigger below.
+drop policy if exists "notifications_select_admin" on notifications;
+create policy "notifications_select_admin" on notifications
+  for select using (is_admin(family_id));
+
 -- ============================================================
 -- 4. TRIGGERS
 -- ============================================================
@@ -424,6 +474,115 @@ create trigger trg_prevent_role_escalation
   before update on members
   for each row execute function prevent_role_privilege_escalation();
 
+-- 4c. members.balance is a derived value (transfers in minus that member's
+-- own spending) — it must never be writable directly by the app/client, only
+-- by recalc_member_balance() below. A BEFORE UPDATE trigger can't tell "the
+-- app tried to change this" apart from "our own trusted function changed
+-- this", so the trusted path flips a transaction-local flag immediately
+-- before/after its update, and this trigger only allows the change through
+-- while that flag is set.
+create or replace function prevent_balance_tampering()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  if new.balance is distinct from old.balance
+     and coalesce(current_setting('app.allow_balance_update', true), 'off') <> 'on' then
+    raise exception 'members.balance cannot be set directly — it is derived from transfers and transactions';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_prevent_balance_tampering on members;
+create trigger trg_prevent_balance_tampering
+  before update on members
+  for each row execute function prevent_balance_tampering();
+
+-- 4d. Recomputes one member's live balance from source tables (the same
+-- "recompute from scratch" pattern as recalc_wallet_balance, so edits/
+-- deletes to either side stay correct without incremental drift).
+create or replace function recalc_member_balance(target_member_id uuid)
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  total_transfers numeric;
+  total_spent numeric;
+begin
+  select coalesce(sum(amount), 0) into total_transfers
+  from member_balance_transfers where member_id = target_member_id;
+
+  select coalesce(sum(amount * exchange_rate_to_base), 0) into total_spent
+  from transactions where member_id = target_member_id;
+
+  perform set_config('app.allow_balance_update', 'on', true);
+  update members set balance = total_transfers - total_spent where id = target_member_id;
+  perform set_config('app.allow_balance_update', 'off', true);
+end;
+$$;
+
+create or replace function trg_fn_recalc_member_balance_on_txn()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  if TG_OP = 'DELETE' then
+    perform recalc_member_balance(old.member_id);
+    return old;
+  end if;
+
+  perform recalc_member_balance(new.member_id);
+  if TG_OP = 'UPDATE' and old.member_id is distinct from new.member_id then
+    perform recalc_member_balance(old.member_id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_transactions_recalc_member_balance on transactions;
+create trigger trg_transactions_recalc_member_balance
+  after insert or update or delete on transactions
+  for each row execute function trg_fn_recalc_member_balance_on_txn();
+
+-- 4e. When a member tops up their own balance: check the family actually has
+-- that much unallocated cash (wallet balance minus what's already allocated
+-- to every member), recompute the member's balance, and notify admins.
+create or replace function handle_member_balance_transfer()
+returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  wallet_balance numeric;
+  allocated numeric;
+  available numeric;
+begin
+  select balance_cache into wallet_balance from wallets where family_id = new.family_id;
+  select coalesce(sum(balance), 0) into allocated from members where family_id = new.family_id;
+  available := coalesce(wallet_balance, 0) - allocated;
+
+  if new.amount > available then
+    raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
+  end if;
+
+  perform recalc_member_balance(new.member_id);
+
+  insert into notifications (family_id, type, member_id, amount)
+  values (new.family_id, 'member_topup', new.member_id, new.amount);
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_member_balance_transfer on member_balance_transfers;
+create trigger trg_member_balance_transfer
+  after insert on member_balance_transfers
+  for each row execute function handle_member_balance_transfer();
+
 -- ============================================================
 -- 5. REALTIME
 -- ============================================================
@@ -436,7 +595,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['transactions', 'deposits', 'wallets', 'members', 'planned_payments']
+  foreach t in array array['transactions', 'deposits', 'wallets', 'members', 'planned_payments', 'member_balance_transfers', 'notifications']
   loop
     if not exists (
       select 1 from pg_publication_tables

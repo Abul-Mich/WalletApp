@@ -273,6 +273,93 @@ button.link-btn:hover {
   color: var(--text);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px 6px 14px;
+}
+
+.user-chip-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.notification-bell {
+  position: relative;
+}
+
+.bell-btn {
+  position: relative;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bell-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.bell-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 999px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.bell-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  z-index: 20;
+  box-shadow: 0 12px 28px -12px rgba(0, 0, 0, 0.5);
+}
+
+.member-list-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.member-balance {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 @media (min-width: 720px) {
   .dashboard {
     grid-template-columns: repeat(2, minmax(0, 1fr));
