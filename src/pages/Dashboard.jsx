@@ -34,6 +34,7 @@ export default function Dashboard({ familyId }) {
   const [breakdown, setBreakdown] = useState([])
   const [plannedPayments, setPlannedPayments] = useState([])
   const [activity, setActivity] = useState([])
+  const [view, setView] = useState('home') // 'home' | 'settings'
 
   // Kept in refs so the realtime callback (registered once) can look up
   // current names without re-subscribing every time members/categories change.
@@ -227,11 +228,69 @@ export default function Dashboard({ familyId }) {
   const amAdmin = isAdmin(myRole)
   const amSuperadmin = isSuperadmin(myRole)
 
+  if (view === 'settings' && amAdmin) {
+    return (
+      <div className="dashboard">
+        <header>
+          <button type="button" className="back-btn" onClick={() => setView('home')}>
+            &larr; Back
+          </button>
+          <h1>Settings</h1>
+          <span />
+        </header>
+
+        <section className="card">
+          <h2>Exchange Rate</h2>
+          <p className="hint">
+            For informal/parallel-market currencies (e.g. LBP). Enter one direction — the
+            reverse rate is derived and stored automatically. Stays in effect until you
+            set a new rate (doesn't reset daily).
+          </p>
+          <ExchangeRateOverride
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+          />
+        </section>
+
+        <section className="card">
+          <h2>Budgets &amp; Limits</h2>
+          <AdminSettings
+            familyId={familyId}
+            family={family}
+            members={members}
+            categories={categories}
+            baseCurrency={family.base_currency}
+            memberSpends={memberSpends}
+            amSuperadmin={amSuperadmin}
+            myMemberId={myMember.id}
+            onDone={() => {
+              loadFamilyAndMembers()
+              loadCategories()
+            }}
+          />
+        </section>
+      </div>
+    )
+  }
+
   return (
     <div className="dashboard">
       <header>
-        <h1>{family.name}</h1>
-        <p className="subtitle">Base currency: {family.base_currency}</p>
+        <div>
+          <h1>{family.name}</h1>
+          <p className="subtitle">Base currency: {family.base_currency}</p>
+        </div>
+        {amAdmin && (
+          <button
+            type="button"
+            className="settings-btn"
+            aria-label="Settings"
+            onClick={() => setView('settings')}
+          >
+            Settings
+          </button>
+        )}
       </header>
 
       <LimitWarningBanner spend={mySpend} baseCurrency={family.base_currency} />
@@ -280,22 +339,6 @@ export default function Dashboard({ familyId }) {
         <section className="card">
           <h2>Add Funds</h2>
           <DepositForm familyId={familyId} memberId={myMember.id} baseCurrency={family.base_currency} />
-        </section>
-      )}
-
-      {amAdmin && (
-        <section className="card">
-          <h2>Manual Exchange Rate Override</h2>
-          <p className="hint">
-            For informal/parallel-market currencies (e.g. LBP). Enter one direction — the
-            reverse rate is derived and stored automatically. Stays in effect until you
-            set a new rate (doesn't reset daily).
-          </p>
-          <ExchangeRateOverride
-            familyId={familyId}
-            memberId={myMember.id}
-            baseCurrency={family.base_currency}
-          />
         </section>
       )}
 
@@ -401,26 +444,6 @@ export default function Dashboard({ familyId }) {
           ))}
         </ul>
       </section>
-
-      {amAdmin && (
-        <section className="card">
-          <h2>Admin Settings</h2>
-          <AdminSettings
-            familyId={familyId}
-            family={family}
-            members={members}
-            categories={categories}
-            baseCurrency={family.base_currency}
-            memberSpends={memberSpends}
-            amSuperadmin={amSuperadmin}
-            myMemberId={myMember.id}
-            onDone={() => {
-              loadFamilyAndMembers()
-              loadCategories()
-            }}
-          />
-        </section>
-      )}
 
       {amAdmin && invite && (
         <section className="card">
