@@ -229,6 +229,106 @@ button.link-btn {
   background: #334155;
 }
 
+.bill-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.bill-row {
+  padding: 10px 0;
+  border-bottom: 1px solid #334155;
+}
+
+.bill-row:last-child {
+  border-bottom: none;
+}
+
+.bill-row.soon .breakdown-row span:first-child {
+  color: #fbbf24;
+}
+
+.bill-row.overdue .breakdown-row span:first-child {
+  color: #f87171;
+}
+
+.bill-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.bill-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.bill-actions button:not(.remove-btn) {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #3b82f6;
+}
+
+.activity-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.activity-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #334155;
+  font-size: 13px;
+}
+
+.activity-list li:last-child {
+  border-bottom: none;
+}
+
+.txn-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.txn-actions button {
+  padding: 3px 10px;
+  font-size: 12px;
+  background: #334155;
+}
+
+.txn-edit {
+  padding: 10px 0;
+  border-bottom: 1px solid #334155;
+}
+
+.category-budget-row {
+  display: block !important;
+  padding: 10px 0;
+  border-bottom: 1px solid #334155;
+}
+
+.category-budget-row:last-child {
+  border-bottom: none;
+}
+
+.category-budget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.badge.superadmin {
+  background: #a855f7;
+}
+
 .rate-eq {
   align-self: center;
   color: #94a3b8;

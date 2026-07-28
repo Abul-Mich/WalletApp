@@ -2,19 +2,31 @@ import { useState } from 'react'
 import { SUPPORTED_CURRENCIES, setManualOverride } from '../lib/exchangeRates'
 
 export default function ExchangeRateOverride({ familyId, memberId, baseCurrency, onDone }) {
-  const foreignCurrencies = SUPPORTED_CURRENCIES.filter((c) => c !== baseCurrency)
-  const [fromCurrency, setFromCurrency] = useState(foreignCurrencies[0] ?? '')
+  const [fromCurrency, setFromCurrency] = useState(
+    SUPPORTED_CURRENCIES.find((c) => c !== baseCurrency) ?? SUPPORTED_CURRENCIES[0]
+  )
+  const [toCurrency, setToCurrency] = useState(baseCurrency)
   const [rate, setRate] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState(null)
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setBusy(true)
     setStatus(null)
+
+    if (fromCurrency === toCurrency) {
+      setStatus('Pick two different currencies.')
+      return
+    }
+
+    setBusy(true)
     try {
-      await setManualOverride(familyId, memberId, fromCurrency, baseCurrency, parseFloat(rate))
-      setStatus(`Set: 1 ${fromCurrency} = ${rate} ${baseCurrency} (today only)`)
+      // Stores this exact direction plus the auto-derived inverse — either
+      // direction can be entered here, both become usable everywhere in the
+      // app (deposits, expenses, bills always look up whatever direction
+      // they need, so this doesn't have to match base currency at all).
+      await setManualOverride(familyId, memberId, fromCurrency, toCurrency, parseFloat(rate))
+      setStatus(`Set: 1 ${fromCurrency} = ${rate} ${toCurrency} (and the reverse rate) — in effect until changed`)
       setRate('')
       onDone?.()
     } catch (err) {
@@ -24,27 +36,33 @@ export default function ExchangeRateOverride({ familyId, memberId, baseCurrency,
     }
   }
 
-  if (foreignCurrencies.length === 0) return null
-
   return (
     <form onSubmit={handleSubmit} className="inline-form">
+      <span>1</span>
       <select value={fromCurrency} onChange={(e) => setFromCurrency(e.target.value)}>
-        {foreignCurrencies.map((c) => (
+        {SUPPORTED_CURRENCIES.map((c) => (
           <option key={c} value={c}>
             {c}
           </option>
         ))}
       </select>
-      <span className="rate-eq">→ {baseCurrency}</span>
+      <span className="rate-eq">=</span>
       <input
         type="number"
         step="0.0001"
         min="0.0001"
-        placeholder={`Rate (e.g. 89500)`}
+        placeholder="Rate (e.g. 89500)"
         value={rate}
         onChange={(e) => setRate(e.target.value)}
         required
       />
+      <select value={toCurrency} onChange={(e) => setToCurrency(e.target.value)}>
+        {SUPPORTED_CURRENCIES.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
       <button type="submit" disabled={busy}>
         {busy ? 'Setting...' : 'Set Today\u2019s Rate'}
       </button>

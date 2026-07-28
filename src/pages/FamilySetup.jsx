@@ -45,7 +45,7 @@ export default function FamilySetup({ onFamilyReady }) {
         family_id: familyId,
         user_id: session.user.id,
         display_name: displayName || session.user.email,
-        role: 'admin',
+        role: 'superadmin',
         preferred_currency: baseCurrency
       })
       if (memErr) throw memErr
@@ -142,7 +142,7 @@ export default function FamilySetup({ onFamilyReady }) {
             <option value="LBP">LBP — Lebanese Pound</option>
           </select>
           <button type="submit" disabled={busy}>
-            {busy ? 'Creating...' : 'Create Family (become Admin)'}
+            {busy ? 'Creating...' : 'Create Family (become Superadmin)'}
           </button>
         </form>
       ) : (
