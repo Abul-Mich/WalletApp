@@ -25,7 +25,8 @@
   --warning: #eab04d;
 
   /* type */
-  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   /* scale */
   --radius-sm: 8px;
@@ -41,6 +42,12 @@ html {
   -webkit-tap-highlight-color: transparent;
 }
 
+html,
+body {
+  overflow-x: hidden;
+  width: 100%;
+}
+
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -50,7 +57,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3 {
+h1,
+h2,
+h3 {
   font-family: var(--font-body);
   letter-spacing: -0.01em;
 }
@@ -66,9 +75,18 @@ h1, h2, h3 {
   color: var(--accent-ink);
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 2px solid var(--bg); }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+}
 
 /* ===================================================================
    Auth screens (Login / FamilySetup)
@@ -78,7 +96,9 @@ h1, h2, h3 {
   max-width: 420px;
   margin: 0 auto;
   min-height: 100vh;
-  padding: 14vh 24px 40px;
+  padding: max(14vh, env(safe-area-inset-top))
+    max(24px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom))
+    max(24px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
 }
@@ -113,7 +133,9 @@ select {
   color: var(--text);
   font-family: var(--font-body);
   font-size: 16px; /* prevents iOS zoom-on-focus */
-  transition: border-color 120ms ease, background 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
 input::placeholder {
@@ -146,7 +168,10 @@ button {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 120ms ease, transform 80ms ease, opacity 120ms ease;
+  transition:
+    background 120ms ease,
+    transform 80ms ease,
+    opacity 120ms ease;
 }
 
 button:hover {
@@ -220,6 +245,17 @@ button.link-btn:hover {
   color: var(--danger);
 }
 
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
 /* ===================================================================
    Dashboard shell -- mobile-first, becomes a responsive grid on
    tablet/desktop.
@@ -228,7 +264,9 @@ button.link-btn:hover {
 .dashboard {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 20px 16px 96px;
+  padding: max(20px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
@@ -239,7 +277,8 @@ button.link-btn:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   padding: 4px 2px 14px;
   margin-bottom: 4px;
 }
@@ -256,7 +295,6 @@ button.link-btn:hover {
   margin: 2px 0 0;
 }
 
-.settings-btn,
 .back-btn {
   flex: 0 0 auto;
   background: var(--surface);
@@ -267,7 +305,6 @@ button.link-btn:hover {
   font-weight: 600;
 }
 
-.settings-btn:hover,
 .back-btn:hover {
   background: var(--surface-hover);
   color: var(--text);
@@ -282,46 +319,176 @@ button.link-btn:hover {
   justify-content: flex-end;
 }
 
-.user-chip {
-  display: flex;
+/* Icon-only buttons (Settings gear, Notifications bell) */
+.icon-btn {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   border-radius: 999px;
-  padding: 6px 12px 6px 14px;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
 }
 
-.user-chip-name {
-  font-size: 13px;
-  font-weight: 600;
+.icon-btn:hover {
+  background: var(--surface-hover);
   color: var(--text);
-  white-space: nowrap;
+}
+
+/* Role-based accent, shared by the icon buttons and the user chip so the
+   header visually communicates who you are and what you can do. */
+.icon-btn.role-superadmin,
+.user-chip.role-superadmin {
+  border-color: rgba(201, 160, 92, 0.45);
+}
+
+.icon-btn.role-superadmin {
+  color: var(--gold, #c9a05c);
+}
+
+.icon-btn.role-admin,
+.user-chip.role-admin {
+  border-color: rgba(91, 141, 239, 0.45);
+}
+
+.icon-btn.role-admin {
+  color: var(--accent-bright);
+}
+
+.icon-btn.role-member,
+.user-chip.role-member {
+  border-color: var(--border);
 }
 
 .notification-bell {
   position: relative;
 }
 
-.bell-btn {
+.profile-menu-wrap {
   position: relative;
-  background: var(--surface);
-  color: var(--text-muted);
+}
+
+.profile-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 10px 6px 8px;
+  border-radius: 999px;
   border: 1px solid var(--border);
-  padding: 9px 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.profile-trigger:hover {
+  background: var(--surface-hover);
+}
+
+.profile-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--accent-soft, rgba(91, 141, 239, 0.16));
+  color: var(--accent-bright);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.profile-trigger-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-role {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+}
+
+.profile-role.superadmin,
+.profile-role.admin {
+  background: rgba(91, 141, 239, 0.12);
+  color: var(--accent-bright);
+}
+
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.14);
+  padding: 8px;
+  z-index: 20;
+}
+
+.profile-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.profile-menu-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.profile-menu-action {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
   font-size: 13px;
   font-weight: 600;
 }
 
-.bell-btn:hover {
+.profile-menu-action:hover {
   background: var(--surface-hover);
-  color: var(--text);
 }
 
 .bell-badge {
   position: absolute;
-  top: -6px;
-  right: -6px;
+  top: -4px;
+  right: -4px;
   background: var(--danger);
   color: #fff;
   font-size: 10px;
@@ -333,11 +500,31 @@ button.link-btn:hover {
   text-align: center;
 }
 
+@media (max-width: 640px) {
+  .header-actions {
+    gap: 6px;
+  }
+
+  .profile-trigger {
+    padding: 6px;
+    min-height: 38px;
+  }
+
+  .profile-trigger-text {
+    display: none;
+  }
+
+  .profile-menu {
+    right: -4px;
+    min-width: min(220px, calc(100vw - 24px));
+  }
+}
+
 .bell-dropdown {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  width: 280px;
+  width: min(280px, calc(100vw - 32px));
   max-height: 320px;
   overflow-y: auto;
   background: var(--surface-raised);
@@ -365,7 +552,7 @@ button.link-btn:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-auto-flow: row dense;
     gap: 16px 18px;
-    padding: 32px 28px 96px;
+    padding: 32px 28px 40px;
   }
 
   .dashboard > header,
@@ -617,8 +804,9 @@ button.link-btn:hover {
 }
 
 .bill-actions button:not(.remove-btn) {
-  padding: 5px 12px;
-  font-size: 12px;
+  padding: 8px 14px;
+  min-height: 36px;
+  font-size: 12.5px;
   background: var(--surface-hover);
   color: var(--accent-bright);
 }
@@ -658,8 +846,9 @@ button.link-btn:hover {
 }
 
 .txn-actions button {
-  padding: 4px 11px;
-  font-size: 12px;
+  padding: 8px 14px;
+  min-height: 36px;
+  font-size: 12.5px;
   background: var(--surface-hover);
   color: var(--text-muted);
 }
@@ -779,7 +968,8 @@ button.link-btn:hover {
 .remove-btn {
   background: transparent;
   color: var(--danger);
-  padding: 3px 9px;
+  padding: 8px 12px;
+  min-height: 36px;
   font-size: 13px;
 }
 

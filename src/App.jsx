@@ -19,15 +19,22 @@ export default function App() {
     let cancelled = false
     async function checkMembership() {
       setCheckingMembership(true)
-      const { data } = await supabase
-        .from('members')
-        .select('family_id')
-        .eq('user_id', session.user.id)
-        .limit(1)
-        .maybeSingle()
-      if (!cancelled) {
-        setFamilyId(data?.family_id ?? null)
-        setCheckingMembership(false)
+      try {
+        const { data, error } = await supabase
+          .from('members')
+          .select('family_id')
+          .eq('user_id', session.user.id)
+          .limit(1)
+          .maybeSingle()
+        if (error) throw error
+        if (!cancelled) setFamilyId(data?.family_id ?? null)
+      } catch {
+        // If this fails (network blip, RLS hiccup, etc.) don't leave the
+        // person stuck on a loading screen forever — treat it as "no
+        // family yet" so they land somewhere with a working Sign Out button.
+        if (!cancelled) setFamilyId(null)
+      } finally {
+        if (!cancelled) setCheckingMembership(false)
       }
     }
     checkMembership()
@@ -37,7 +44,16 @@ export default function App() {
   }, [session])
 
   if (loading || checkingMembership) {
-    return <p className="status">Loading...</p>
+    return (
+      <div className="loading-screen">
+        <p className="status">Loading...</p>
+        {session && (
+          <button type="button" className="link-btn" onClick={() => supabase.auth.signOut()}>
+            Sign out
+          </button>
+        )}
+      </div>
+    )
   }
 
   if (!session) return <Login />

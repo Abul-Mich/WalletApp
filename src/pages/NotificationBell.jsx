@@ -8,7 +8,7 @@ function lastSeenKey(familyId, userId) {
   return `wallet:notifications-last-seen:${familyId}:${userId}`
 }
 
-export default function NotificationBell({ familyId, userId, notifications, members }) {
+export default function NotificationBell({ familyId, userId, notifications, members, role }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -42,8 +42,22 @@ export default function NotificationBell({ familyId, userId, notifications, memb
 
   return (
     <div className="notification-bell" ref={ref}>
-      <button type="button" className="bell-btn" aria-label="Notifications" onClick={toggleOpen}>
-        Notifications
+      <button
+        type="button"
+        className={`icon-btn role-${role}`}
+        aria-label="Notifications"
+        title="Notifications"
+        onClick={toggleOpen}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M18 16v-5a6 6 0 1 0-12 0v5l-1.6 2.4a1 1 0 0 0 .83 1.6h13.54a1 1 0 0 0 .83-1.6L18 16Z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+          <path d="M9.5 20.5a2.5 2.5 0 0 0 5 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
         {unreadCount > 0 && <span className="bell-badge">{unreadCount}</span>}
       </button>
       {open && (
