@@ -1,14 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { useAuth } from '../AuthContext'
 import DepositForm from './DepositForm'
 import TransactionForm from './TransactionForm'
+import TransactionRow from './TransactionRow'
 import ExchangeRateOverride from './ExchangeRateOverride'
 import AdminSettings from './AdminSettings'
 import LimitWarningBanner from './LimitWarningBanner'
+import PlannedPayments from './PlannedPayments'
+import ActivityFeed from './ActivityFeed'
 import { getMemberSpend } from '../lib/spendingLimits'
+import { getFamilyBudgetSpend } from '../lib/budgets'
+import { isAdmin, isSuperadmin } from '../lib/roles'
 
 const PAGE_SIZE = 20 // FR13 — load 20 at a time, not the full history
+const ACTIVITY_LIMIT = 10
 
 export default function Dashboard({ familyId }) {
   const { session } = useAuth()
@@ -24,7 +30,17 @@ export default function Dashboard({ familyId }) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [mySpend, setMySpend] = useState(null)
   const [memberSpends, setMemberSpends] = useState({}) // memberId -> spend result, for admin view
+  const [familyBudgetSpend, setFamilyBudgetSpend] = useState(null)
   const [breakdown, setBreakdown] = useState([])
+  const [plannedPayments, setPlannedPayments] = useState([])
+  const [activity, setActivity] = useState([])
+
+  // Kept in refs so the realtime callback (registered once) can look up
+  // current names without re-subscribing every time members/categories change.
+  const membersRef = useRef(members)
+  const categoriesRef = useRef(categories)
+  membersRef.current = members
+  categoriesRef.current = categories
 
   async function loadFamilyAndMembers() {
     const { data: fam } = await supabase.from('families').select('*').eq('id', familyId).single()
@@ -46,6 +62,7 @@ export default function Dashboard({ familyId }) {
 
     loadMySpend(resolvedMember)
     loadAllMemberSpends(mem)
+    if (fam) loadFamilyBudget(fam)
 
     return resolvedMember
   }
@@ -84,8 +101,8 @@ export default function Dashboard({ familyId }) {
 
   async function loadBreakdown() {
     // Full-history aggregation for the category breakdown (FR21). At family
-    // scale this is a small dataset; Day 5 pagination is only for the
-    // recent-transactions list, not this summary.
+    // scale this is a small dataset; pagination above is only for the
+    // transaction list, not this summary.
     const { data } = await supabase
       .from('transactions')
       .select('amount, exchange_rate_to_base, categories(name)')
@@ -112,6 +129,20 @@ export default function Dashboard({ familyId }) {
     setMemberSpends(Object.fromEntries(entries))
   }
 
+  async function loadFamilyBudget(currentFamily) {
+    const spend = await getFamilyBudgetSpend(familyId, currentFamily)
+    setFamilyBudgetSpend(spend)
+  }
+
+  async function loadPlannedPayments() {
+    const { data } = await supabase
+      .from('planned_payments')
+      .select('*')
+      .eq('family_id', familyId)
+      .eq('is_active', true)
+    setPlannedPayments(data || [])
+  }
+
   useEffect(() => {
     let cancelled = false
     async function loadAll() {
@@ -120,7 +151,8 @@ export default function Dashboard({ familyId }) {
         loadWallet(),
         loadCategories(),
         loadTransactions(),
-        loadBreakdown()
+        loadBreakdown(),
+        loadPlannedPayments()
       ])
     }
     if (!cancelled) loadAll()
@@ -141,16 +173,45 @@ export default function Dashboard({ familyId }) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transactions', filter: `family_id=eq.${familyId}` },
-        () => {
+        (payload) => {
           loadTransactions()
           loadBreakdown()
-          loadFamilyAndMembers() // also refreshes mySpend + memberSpends, since limits are spend-dependent
+          loadFamilyAndMembers() // also refreshes mySpend + memberSpends + family budget spend
+
+          // In-app "notify me when someone spends" — no push infra, rides
+          // this same realtime channel. Only new spends generate an entry.
+          if (payload.eventType === 'INSERT') {
+            const row = payload.new
+            const member = membersRef.current.find((m) => m.id === row.member_id)
+            const category = categoriesRef.current.find((c) => c.id === row.category_id)
+            setActivity((prev) =>
+              [
+                {
+                  id: row.id,
+                  memberName: member?.display_name ?? 'Someone',
+                  amount: row.amount,
+                  currency: row.currency,
+                  categoryName: category?.name ?? null,
+                  timeLabel: new Date(row.created_at).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })
+                },
+                ...prev
+              ].slice(0, ACTIVITY_LIMIT)
+            )
+          }
         }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'deposits', filter: `family_id=eq.${familyId}` },
         loadTransactions
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'planned_payments', filter: `family_id=eq.${familyId}` },
+        loadPlannedPayments
       )
       .subscribe()
 
@@ -161,6 +222,10 @@ export default function Dashboard({ familyId }) {
   }, [familyId, session.user.id])
 
   if (!family) return <p className="status">Loading family...</p>
+
+  const myRole = myMember?.role
+  const amAdmin = isAdmin(myRole)
+  const amSuperadmin = isSuperadmin(myRole)
 
   return (
     <div className="dashboard">
@@ -176,26 +241,55 @@ export default function Dashboard({ familyId }) {
         <p className="balance">
           {wallet ? Number(wallet.balance_cache).toFixed(2) : '--'} {family.base_currency}
         </p>
-        <p className="hint">Total deposited minus total spent, live-synced across the family.</p>
+        <p className="hint">Actual cash: total deposited minus total spent, live-synced.</p>
       </section>
 
-      {myMember?.role === 'admin' && (
+      {familyBudgetSpend && (
         <section className="card">
-          <h2>Add Funds</h2>
-          <DepositForm
-            familyId={familyId}
-            memberId={myMember.id}
-            baseCurrency={family.base_currency}
-          />
+          <h2>Family Budget ({familyBudgetSpend.period})</h2>
+          <div className="breakdown-row">
+            <span>Used</span>
+            <span>
+              {familyBudgetSpend.spent.toFixed(2)} / {familyBudgetSpend.limit.toFixed(2)}{' '}
+              {family.base_currency}
+            </span>
+          </div>
+          <div className="breakdown-bar-track">
+            <div
+              className={`breakdown-bar ${
+                familyBudgetSpend.isOverLimit ? 'over' : familyBudgetSpend.isNearLimit ? 'near' : ''
+              }`}
+              style={{ width: `${Math.min(familyBudgetSpend.percentUsed * 100, 100)}%` }}
+            />
+          </div>
+          <p className="hint">This is a target the admin set, separate from actual cash above.</p>
         </section>
       )}
 
-      {myMember?.role === 'admin' && (
+      {mySpend && (
+        <section className="card">
+          <h2>My Balance This Period ({mySpend.period})</h2>
+          <p className="balance">
+            {mySpend.spent.toFixed(2)} / {mySpend.limit.toFixed(2)} {family.base_currency}
+          </p>
+          <p className="hint">How much you've drawn from the family budget so far this period.</p>
+        </section>
+      )}
+
+      {amAdmin && (
+        <section className="card">
+          <h2>Add Funds</h2>
+          <DepositForm familyId={familyId} memberId={myMember.id} baseCurrency={family.base_currency} />
+        </section>
+      )}
+
+      {amAdmin && (
         <section className="card">
           <h2>Manual Exchange Rate Override</h2>
           <p className="hint">
-            For informal/parallel-market currencies (e.g. LBP) where the live rate
-            doesn't reflect what your family actually uses. Applies to today's date only.
+            For informal/parallel-market currencies (e.g. LBP). Enter one direction — the
+            reverse rate is derived and stored automatically. Stays in effect until you
+            set a new rate (doesn't reset daily).
           </p>
           <ExchangeRateOverride
             familyId={familyId}
@@ -217,28 +311,48 @@ export default function Dashboard({ familyId }) {
         </section>
       )}
 
+      {myMember && categories.length > 0 && (
+        <section className="card">
+          <h2>Upcoming Bills</h2>
+          <PlannedPayments
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            payments={plannedPayments}
+            onDone={() => {
+              loadPlannedPayments()
+              loadTransactions()
+              loadBreakdown()
+              loadFamilyAndMembers()
+            }}
+          />
+        </section>
+      )}
+
+      <section className="card">
+        <h2>Recent Activity</h2>
+        <ActivityFeed events={activity} />
+      </section>
+
       <section className="card">
         <h2>Transaction History</h2>
         {transactions.length === 0 && <p className="hint">No transactions yet.</p>}
         <ul className="txn-list">
           {transactions.map((t) => (
-            <li key={t.id}>
-              <div>
-                <span className="txn-amount">
-                  -{Number(t.amount).toFixed(2)} {t.currency}
-                  {t.currency !== family.base_currency && (
-                    <span className="txn-converted">
-                      {' '}
-                      (≈{(t.amount * t.exchange_rate_to_base).toFixed(2)} {family.base_currency})
-                    </span>
-                  )}
-                </span>
-                <span className="txn-meta">
-                  {t.categories?.name ?? 'Uncategorized'} · {t.members?.display_name}
-                </span>
-              </div>
-              {t.note && <p className="txn-note">{t.note}</p>}
-            </li>
+            <TransactionRow
+              key={t.id}
+              t={t}
+              familyId={familyId}
+              baseCurrency={family.base_currency}
+              categories={categories}
+              canManage={t.member_id === myMember?.id || amAdmin}
+              onChanged={() => {
+                loadTransactions()
+                loadBreakdown()
+                loadFamilyAndMembers()
+              }}
+            />
           ))}
         </ul>
         {hasMoreTxns && (
@@ -288,15 +402,18 @@ export default function Dashboard({ familyId }) {
         </ul>
       </section>
 
-      {myMember?.role === 'admin' && (
+      {amAdmin && (
         <section className="card">
           <h2>Admin Settings</h2>
           <AdminSettings
             familyId={familyId}
+            family={family}
             members={members}
             categories={categories}
             baseCurrency={family.base_currency}
             memberSpends={memberSpends}
+            amSuperadmin={amSuperadmin}
+            myMemberId={myMember.id}
             onDone={() => {
               loadFamilyAndMembers()
               loadCategories()
@@ -305,7 +422,7 @@ export default function Dashboard({ familyId }) {
         </section>
       )}
 
-      {myMember?.role === 'admin' && invite && (
+      {amAdmin && invite && (
         <section className="card">
           <h2>Invite Code</h2>
           <p className="invite-code">{invite.code}</p>

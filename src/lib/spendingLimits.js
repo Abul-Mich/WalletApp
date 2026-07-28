@@ -1,7 +1,7 @@
 import { supabase } from '../supabaseClient'
 
 // Returns the start of the current period (week or month) as an ISO timestamp.
-function periodStart(period) {
+export function periodStart(period) {
   const now = new Date()
   if (period === 'weekly') {
     const day = now.getDay() // 0 = Sunday

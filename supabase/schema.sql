@@ -1,6 +1,8 @@
--- Family Wallet App — Day 1 Schema
+-- Family Wallet App — Full Schema (Days 1-5 + Planned Payments + Roles/Budgets redesign)
 -- Run this in the Supabase SQL Editor (Project > SQL Editor > New Query)
--- Safe to re-run: drops existing objects first (only use this while developing).
+-- Safe to re-run: drops existing policies/triggers before recreating them.
+-- NOTE: table/column additions use "if not exists" so this is also safe to run
+-- as an upgrade on top of an earlier version of this schema.
 
 -- ============================================================
 -- 0. EXTENSIONS
@@ -15,21 +17,45 @@ create table if not exists families (
   id uuid primary key default uuid_generate_v4(),
   name text not null,
   base_currency text not null default 'USD',
+  -- Family Budget: a target the admin sets for the period, separate from the
+  -- actual cash balance (wallets.balance_cache). "Budget used" is computed
+  -- from transactions the same way member limits are, just at family scope.
+  budget_amount numeric,
+  budget_period text check (budget_period in ('weekly', 'monthly')),
   created_at timestamptz not null default now()
 );
+alter table families add column if not exists budget_amount numeric;
+alter table families add column if not exists budget_period text;
 
 create table if not exists members (
   id uuid primary key default uuid_generate_v4(),
   family_id uuid not null references families(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   display_name text not null,
-  role text not null check (role in ('admin', 'member')) default 'member',
+  role text not null check (role in ('superadmin', 'admin', 'member')) default 'member',
   spending_limit_amount numeric,
   spending_limit_period text check (spending_limit_period in ('weekly', 'monthly')),
   preferred_currency text not null default 'USD',
   created_at timestamptz not null default now(),
   unique (family_id, user_id)
 );
+-- Migration: on a database created before 'superadmin' existed, the CHECK
+-- constraint above was never applied (CREATE TABLE IF NOT EXISTS skips
+-- table/constraint definitions entirely if the table already exists). Fix
+-- it here so re-running this script also repairs older databases.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conname = 'members_role_check'
+      and conrelid = 'members'::regclass
+      and pg_get_constraintdef(oid) not like '%superadmin%'
+  ) then
+    alter table members drop constraint members_role_check;
+    alter table members add constraint members_role_check
+      check (role in ('superadmin', 'admin', 'member'));
+  end if;
+end $$;
 
 create table if not exists wallets (
   id uuid primary key default uuid_generate_v4(),
@@ -42,8 +68,14 @@ create table if not exists categories (
   id uuid primary key default uuid_generate_v4(),
   family_id uuid not null references families(id) on delete cascade,
   name text not null,
-  is_default boolean not null default false
+  is_default boolean not null default false,
+  -- Category Budget: independent cap/target for this category, unrelated to
+  -- any member's personal spending limit (two separate tracked totals).
+  budget_amount numeric,
+  budget_period text check (budget_period in ('weekly', 'monthly'))
 );
+alter table categories add column if not exists budget_amount numeric;
+alter table categories add column if not exists budget_period text;
 
 create table if not exists deposits (
   id uuid primary key default uuid_generate_v4(),
@@ -87,8 +119,25 @@ create table if not exists family_invites (
   used_at timestamptz
 );
 
+-- Planned payments / recurring bills. Any family member can add a bill;
+-- only the creator or an admin/superadmin can edit/delete it.
+create table if not exists planned_payments (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  created_by_member_id uuid not null references members(id) on delete cascade,
+  name text not null,
+  amount numeric not null check (amount > 0),
+  currency text not null,
+  exchange_rate_to_base numeric not null default 1,
+  category_id uuid references categories(id),
+  recurrence text not null check (recurrence in ('one_time', 'weekly', 'monthly')) default 'monthly',
+  next_due_date date not null,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
 -- ============================================================
--- 2. HELPER FUNCTION (avoids recursive RLS lookups)
+-- 2. HELPER FUNCTIONS (avoid recursive RLS lookups)
 -- ============================================================
 -- Returns the family_id(s) the current auth user belongs to.
 create or replace function my_family_ids()
@@ -109,6 +158,26 @@ as $$
   select role from members where user_id = auth.uid() and family_id = fam_id limit 1;
 $$;
 
+-- True for both 'admin' and 'superadmin' — most policies just need "is this
+-- person allowed to manage family settings," not which admin tier exactly.
+create or replace function is_admin(fam_id uuid)
+returns boolean
+language sql
+security definer
+stable
+as $$
+  select my_role_in(fam_id) in ('admin', 'superadmin');
+$$;
+
+create or replace function is_superadmin(fam_id uuid)
+returns boolean
+language sql
+security definer
+stable
+as $$
+  select my_role_in(fam_id) = 'superadmin';
+$$;
+
 -- ============================================================
 -- 3. ROW LEVEL SECURITY
 -- ============================================================
@@ -120,6 +189,7 @@ alter table deposits enable row level security;
 alter table transactions enable row level security;
 alter table exchange_rate_overrides enable row level security;
 alter table family_invites enable row level security;
+alter table planned_payments enable row level security;
 
 -- families: readable/writable only if you're a member of it
 drop policy if exists "families_select" on families;
@@ -128,13 +198,15 @@ create policy "families_select" on families
 
 drop policy if exists "families_insert" on families;
 create policy "families_insert" on families
-  for insert with check (true); -- anyone authenticated can create a new family (they become its admin via app logic)
+  for insert with check (true); -- creator becomes 'superadmin' via app logic
 
 drop policy if exists "families_update" on families;
 create policy "families_update" on families
-  for update using (my_role_in(id) = 'admin');
+  for update using (is_admin(id));
 
--- members: readable by anyone in the same family; writable (role/limits) by admin only
+-- members: readable by anyone in the same family; writable by admins/self,
+-- with role-change privilege escalation blocked by a trigger below (RLS
+-- alone can't compare old vs. new column values on UPDATE).
 drop policy if exists "members_select" on members;
 create policy "members_select" on members
   for select using (family_id in (select my_family_ids()));
@@ -145,48 +217,51 @@ create policy "members_insert_self" on members
 
 drop policy if exists "members_update_admin" on members;
 create policy "members_update_admin" on members
-  for update using (my_role_in(family_id) = 'admin' or user_id = auth.uid());
+  for update using (is_admin(family_id) or user_id = auth.uid());
 
+-- Only admins/superadmin can remove members, and a superadmin can never be
+-- removed by anyone (prevents a family losing its only unremovable admin).
 drop policy if exists "members_delete_admin" on members;
 create policy "members_delete_admin" on members
-  for delete using (my_role_in(family_id) = 'admin');
+  for delete using (is_admin(family_id) and role <> 'superadmin');
 
--- wallets: readable by family, writable by admin (deposits update balance via app logic / triggers)
+-- wallets: readable by family, writable by admins
 drop policy if exists "wallets_select" on wallets;
 create policy "wallets_select" on wallets
   for select using (family_id in (select my_family_ids()));
 
 drop policy if exists "wallets_all_admin" on wallets;
 create policy "wallets_all_admin" on wallets
-  for all using (my_role_in(family_id) = 'admin');
+  for all using (is_admin(family_id));
 
--- categories: readable by family; writable by admin only
+-- categories: readable by family; writable by admins only
 drop policy if exists "categories_select" on categories;
 create policy "categories_select" on categories
   for select using (family_id in (select my_family_ids()));
 
 drop policy if exists "categories_admin_write" on categories;
 create policy "categories_admin_write" on categories
-  for insert with check (my_role_in(family_id) = 'admin');
+  for insert with check (is_admin(family_id));
 
 drop policy if exists "categories_admin_update" on categories;
 create policy "categories_admin_update" on categories
-  for update using (my_role_in(family_id) = 'admin');
+  for update using (is_admin(family_id));
 
 drop policy if exists "categories_admin_delete" on categories;
 create policy "categories_admin_delete" on categories
-  for delete using (my_role_in(family_id) = 'admin');
+  for delete using (is_admin(family_id));
 
--- deposits: readable by family; only admin can insert
+-- deposits: readable by family; only admins can insert
 drop policy if exists "deposits_select" on deposits;
 create policy "deposits_select" on deposits
   for select using (family_id in (select my_family_ids()));
 
 drop policy if exists "deposits_admin_insert" on deposits;
 create policy "deposits_admin_insert" on deposits
-  for insert with check (my_role_in(family_id) = 'admin');
+  for insert with check (is_admin(family_id));
 
--- transactions: readable by family; any member can insert their own transaction
+-- transactions: readable by family; any member can insert their own;
+-- a member can edit/delete their own, admins can edit/delete anyone's (FR — full CRUD)
 drop policy if exists "transactions_select" on transactions;
 create policy "transactions_select" on transactions
   for select using (family_id in (select my_family_ids()));
@@ -198,30 +273,37 @@ create policy "transactions_insert_self" on transactions
     and member_id in (select id from members where user_id = auth.uid())
   );
 
+drop policy if exists "transactions_update_own_or_admin" on transactions;
+create policy "transactions_update_own_or_admin" on transactions
+  for update using (
+    member_id in (select id from members where user_id = auth.uid())
+    or is_admin(family_id)
+  );
+
 drop policy if exists "transactions_delete_own_or_admin" on transactions;
 create policy "transactions_delete_own_or_admin" on transactions
   for delete using (
     member_id in (select id from members where user_id = auth.uid())
-    or my_role_in(family_id) = 'admin'
+    or is_admin(family_id)
   );
 
--- exchange_rate_overrides: readable by family; only admin can insert
+-- exchange_rate_overrides: readable by family; only admins can insert
 drop policy if exists "rate_overrides_select" on exchange_rate_overrides;
 create policy "rate_overrides_select" on exchange_rate_overrides
   for select using (family_id in (select my_family_ids()));
 
 drop policy if exists "rate_overrides_admin_insert" on exchange_rate_overrides;
 create policy "rate_overrides_admin_insert" on exchange_rate_overrides
-  for insert with check (my_role_in(family_id) = 'admin');
+  for insert with check (is_admin(family_id));
 
--- family_invites: readable by family members (to see/share the code); only admin creates
+-- family_invites: readable by family members (to see/share the code); only admins create
 drop policy if exists "invites_select" on family_invites;
 create policy "invites_select" on family_invites
   for select using (family_id in (select my_family_ids()));
 
 drop policy if exists "invites_admin_insert" on family_invites;
 create policy "invites_admin_insert" on family_invites
-  for insert with check (my_role_in(family_id) = 'admin');
+  for insert with check (is_admin(family_id));
 
 -- Public/limited lookup for join-by-code: allow any authenticated user to look up
 -- an invite row by code alone (needed before they're a member of the family).
@@ -229,9 +311,40 @@ drop policy if exists "invites_lookup_by_code" on family_invites;
 create policy "invites_lookup_by_code" on family_invites
   for select using (auth.uid() is not null);
 
+-- planned_payments: readable by family; any member can create; only the
+-- creator or an admin can edit/delete
+drop policy if exists "planned_payments_select" on planned_payments;
+create policy "planned_payments_select" on planned_payments
+  for select using (family_id in (select my_family_ids()));
+
+drop policy if exists "planned_payments_insert" on planned_payments;
+create policy "planned_payments_insert" on planned_payments
+  for insert with check (
+    family_id in (select my_family_ids())
+    and created_by_member_id in (select id from members where user_id = auth.uid())
+  );
+
+drop policy if exists "planned_payments_update" on planned_payments;
+create policy "planned_payments_update" on planned_payments
+  for update using (
+    created_by_member_id in (select id from members where user_id = auth.uid())
+    or is_admin(family_id)
+  );
+
+drop policy if exists "planned_payments_delete" on planned_payments;
+create policy "planned_payments_delete" on planned_payments
+  for delete using (
+    created_by_member_id in (select id from members where user_id = auth.uid())
+    or is_admin(family_id)
+  );
+
 -- ============================================================
--- 4. TRIGGERS — keep wallets.balance_cache in sync
+-- 4. TRIGGERS
 -- ============================================================
+
+-- 4a. Keep wallets.balance_cache in sync on any deposit/transaction change
+-- (insert, update, or delete — this is what makes transaction editing and
+-- deleting correctly reflect in the balance without extra app-side math).
 create or replace function recalc_wallet_balance()
 returns trigger
 language plpgsql
@@ -269,11 +382,67 @@ create trigger trg_transactions_recalc
   after insert or update or delete on transactions
   for each row execute function recalc_wallet_balance();
 
+-- 4b. Block privilege escalation on members.role. RLS policies can only see
+-- the NEW row on UPDATE ... WITH CHECK, not compare it against OLD, so this
+-- has to be a trigger: without it, the existing "members_update_admin" policy
+-- (which lets a user update their own row for things like display_name)
+-- would also let a plain member silently promote themselves to admin.
+create or replace function prevent_role_privilege_escalation()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  if new.role is distinct from old.role then
+    if new.role = 'superadmin' then
+      -- Only allow this if the family doesn't already have a superadmin —
+      -- this is what makes the one-time migration UPDATE (for families
+      -- created before this role existed) work, while still blocking
+      -- anyone from creating a second superadmin or hijacking the role.
+      if exists (
+        select 1 from members where family_id = old.family_id and role = 'superadmin'
+      ) then
+        raise exception 'this family already has a superadmin';
+      end if;
+    elsif old.role = 'superadmin' then
+      -- An existing superadmin can never be demoted/changed by anyone.
+      raise exception 'superadmin role cannot be changed once set';
+    else
+      -- Any other role change (member <-> admin) requires the acting user
+      -- to already be an admin/superadmin of this family.
+      if not is_admin(old.family_id) then
+        raise exception 'only an admin can change a member''s role';
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_prevent_role_escalation on members;
+create trigger trg_prevent_role_escalation
+  before update on members
+  for each row execute function prevent_role_privilege_escalation();
+
 -- ============================================================
 -- 5. REALTIME
 -- ============================================================
 -- Enable realtime on the tables the dashboard needs to live-update.
-alter publication supabase_realtime add table transactions;
-alter publication supabase_realtime add table deposits;
-alter publication supabase_realtime add table wallets;
-alter publication supabase_realtime add table members;
+-- Wrapped in a guard so re-running this script doesn't error out on tables
+-- that are already in the publication (a plain ALTER PUBLICATION ... ADD
+-- TABLE throws if the table's already a member, which would otherwise abort
+-- the rest of this script when re-running on an existing database).
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['transactions', 'deposits', 'wallets', 'members', 'planned_payments']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table %I', t);
+    end if;
+  end loop;
+end $$;
