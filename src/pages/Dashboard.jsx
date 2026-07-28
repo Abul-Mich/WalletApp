@@ -436,7 +436,7 @@ export default function Dashboard({ familyId }) {
             className="back-btn"
             onClick={() => setView("home")}
           >
-            &larr; Back
+            &larr;
           </button>
           <h1>Settings</h1>
           <ProfileMenuButton
