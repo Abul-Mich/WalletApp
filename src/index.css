@@ -265,7 +265,8 @@ button.link-btn:hover {
   max-width: 1100px;
   margin: 0 auto;
   padding: max(20px, env(safe-area-inset-top))
-    max(16px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-right))
+    calc(88px + env(safe-area-inset-bottom))
     max(16px, env(safe-area-inset-left));
   display: grid;
   grid-template-columns: 1fr;
@@ -1309,4 +1310,72 @@ button.link-btn:hover {
 
 .breakdown-bar.over {
   background: var(--danger);
+}
+
+/* Bottom navigation — floating iOS liquid-glass style */
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  z-index: 50;
+}
+
+.bottom-nav-glass {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 448px;
+  padding: 8px 10px;
+  border-radius: 28px;
+  background: rgba(30, 41, 59, 0.55);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  background: transparent;
+  border-radius: 18px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.bottom-nav-item span {
+  font-size: 10px;
+}
+
+.bottom-nav-item.active {
+  color: #3b82f6;
+}
+
+.bottom-nav-add {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #3b82f6, #2563eb);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.5);
+  margin: 0 2px;
 }

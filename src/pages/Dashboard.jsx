@@ -11,6 +11,7 @@ import PlannedPayments from "./PlannedPayments";
 import ActivityFeed from "./ActivityFeed";
 import MemberBalanceTransfer from "./MemberBalanceTransfer";
 import NotificationBell from "./NotificationBell";
+import BottomNav from "./BottomNav";
 import { getMemberSpend } from "../lib/spendingLimits";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
@@ -479,6 +480,8 @@ export default function Dashboard({ familyId }) {
             }}
           />
         </section>
+
+        <BottomNav />
       </div>
     );
   }
@@ -729,6 +732,8 @@ export default function Dashboard({ familyId }) {
       <button className="signout" onClick={() => supabase.auth.signOut()}>
         Sign Out
       </button>
+
+      <BottomNav />
     </div>
   );
 }
