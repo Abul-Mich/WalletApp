@@ -8,7 +8,7 @@ function lastSeenKey(familyId, userId) {
   return `wallet:notifications-last-seen:${familyId}:${userId}`
 }
 
-export default function NotificationBell({ familyId, userId, notifications, members, role }) {
+export default function NotificationBell({ familyId, userId, notifications, members, cards = [], role }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -40,6 +40,10 @@ export default function NotificationBell({ familyId, userId, notifications, memb
     return members.find((m) => m.id === memberId)?.display_name ?? 'Someone'
   }
 
+  function cardName(cardId) {
+    return cards.find((c) => c.id === cardId)?.name ?? 'a card'
+  }
+
   return (
     <div className="notification-bell" ref={ref}>
       <button
@@ -67,8 +71,19 @@ export default function NotificationBell({ familyId, userId, notifications, memb
             {notifications.slice(0, 10).map((n) => (
               <li key={n.id}>
                 <span>
-                  <strong>{memberName(n.member_id)}</strong> added {Number(n.amount).toFixed(2)} to
-                  their balance
+                  <strong>{memberName(n.member_id)}</strong>{' '}
+                  {n.type === 'member_return' && (
+                    <>returned {Number(Math.abs(n.amount)).toFixed(2)} to the family balance</>
+                  )}
+                  {n.type === 'member_topup' && (
+                    <>added {Number(n.amount).toFixed(2)} to their balance</>
+                  )}
+                  {n.type === 'card_topup' && (
+                    <>topped up {cardName(n.card_id)} by {Number(n.amount).toFixed(2)}</>
+                  )}
+                  {n.type === 'card_withdraw' && (
+                    <>spent {Number(n.amount).toFixed(2)} from {cardName(n.card_id)}</>
+                  )}
                 </span>
                 <span className="txn-meta">
                   {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

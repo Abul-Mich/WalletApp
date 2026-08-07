@@ -2,11 +2,14 @@ import { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getExchangeRate, SUPPORTED_CURRENCIES } from '../lib/exchangeRates'
 
-// Self-serve top-up: moves money from the shared family balance into the
-// current member's own live balance. Always immediate (no approval step) —
-// the server-side trigger checks there's enough unallocated family balance
-// and notifies admins/superadmins.
-export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency, onDone }) {
+// Self-serve: moves money from the member's own held balance back into the
+// shared family balance. Mirrors MemberBalanceTransfer, just inserting a
+// negative amount — recalc_member_balance() and the wallet trigger handle
+// both directions from the same table. Multi-currency: the entered amount
+// is converted to the family's base currency before being checked against
+// the member's current balance, same as every other balance figure in
+// the app.
+export default function AddToMainBalanceForm({ familyId, memberId, baseCurrency, currentBalance, onDone }) {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(baseCurrency)
   const [busy, setBusy] = useState(false)
@@ -14,15 +17,24 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setBusy(true)
     setError(null)
+    setBusy(true)
+
     try {
       const rate = await getExchangeRate(familyId, currency, baseCurrency)
+      const parsed = parseFloat(amount)
+      const baseAmount = parsed * rate
+
+      if (baseAmount > currentBalance) {
+        setError(`You only have ${Number(currentBalance).toFixed(2)} ${baseCurrency} to return.`)
+        setBusy(false)
+        return
+      }
 
       const { error: err } = await supabase.from('member_balance_transfers').insert({
         family_id: familyId,
         member_id: memberId,
-        amount: parseFloat(amount),
+        amount: -parsed,
         currency,
         exchange_rate_to_base: rate
       })
@@ -30,8 +42,6 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
       setAmount('')
       onDone?.()
     } catch (err) {
-      // The DB trigger raises a plain exception if there isn't enough
-      // unallocated family balance — Supabase surfaces that as err.message.
       setError(err.message)
     } finally {
       setBusy(false)
@@ -56,9 +66,12 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
           </option>
         ))}
       </select>
-      <button type="submit" disabled={busy}>
-        {busy ? 'Adding...' : 'Add to My Balance'}
+      <button type="submit" disabled={busy || currentBalance <= 0}>
+        {busy ? 'Adding...' : 'Return to Family Balance'}
       </button>
+      {currentBalance <= 0 && !error && (
+        <p className="hint">You don't have any balance to return right now.</p>
+      )}
       {error && <p className="status error">{error}</p>}
     </form>
   )

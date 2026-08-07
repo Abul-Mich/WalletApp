@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getExchangeRate, SUPPORTED_CURRENCIES } from '../lib/exchangeRates'
 
-// Self-serve top-up: moves money from the shared family balance into the
-// current member's own live balance. Always immediate (no approval step) —
-// the server-side trigger checks there's enough unallocated family balance
-// and notifies admins/superadmins.
-export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency, onDone }) {
+// Moves money from the family's unallocated balance onto a shared prepaid
+// card. Any member can do this — the server-side trigger checks there's
+// enough unallocated family balance (not already claimed by a member's own
+// balance or another card).
+export default function CardTopUpForm({ familyId, memberId, cardId, baseCurrency, onDone }) {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(baseCurrency)
   const [busy, setBusy] = useState(false)
@@ -18,9 +18,9 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
     setError(null)
     try {
       const rate = await getExchangeRate(familyId, currency, baseCurrency)
-
-      const { error: err } = await supabase.from('member_balance_transfers').insert({
+      const { error: err } = await supabase.from('card_transfers').insert({
         family_id: familyId,
+        card_id: cardId,
         member_id: memberId,
         amount: parseFloat(amount),
         currency,
@@ -30,8 +30,6 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
       setAmount('')
       onDone?.()
     } catch (err) {
-      // The DB trigger raises a plain exception if there isn't enough
-      // unallocated family balance — Supabase surfaces that as err.message.
       setError(err.message)
     } finally {
       setBusy(false)
@@ -57,7 +55,7 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
         ))}
       </select>
       <button type="submit" disabled={busy}>
-        {busy ? 'Adding...' : 'Add to My Balance'}
+        {busy ? 'Adding...' : 'Top Up Card'}
       </button>
       {error && <p className="status error">{error}</p>}
     </form>
