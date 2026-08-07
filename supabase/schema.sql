@@ -145,13 +145,39 @@ alter table members add column if not exists balance numeric not null default 0;
 
 -- Records a member moving money from the shared family balance into their
 -- own live balance (self-serve; always immediate, no approval step).
+-- amount is stored in `currency`, already converted to the family's base
+-- currency via exchange_rate_to_base for all balance math (mirrors how
+-- deposits/transactions store multi-currency amounts).
+-- amount > 0  => member withdrawing from the shared family balance into
+--                their own held balance
+-- amount < 0  => member returning held cash back into the shared balance
 create table if not exists member_balance_transfers (
   id uuid primary key default uuid_generate_v4(),
   family_id uuid not null references families(id) on delete cascade,
   member_id uuid not null references members(id) on delete cascade,
-  amount numeric not null check (amount > 0),
+  amount numeric not null check (amount <> 0),
+  currency text not null default 'USD',
+  exchange_rate_to_base numeric not null default 1,
   created_at timestamptz not null default now()
 );
+alter table member_balance_transfers add column if not exists currency text not null default 'USD';
+alter table member_balance_transfers add column if not exists exchange_rate_to_base numeric not null default 1;
+-- Migration: older databases created this table before returns-to-main were
+-- supported, with a stricter "amount > 0" check. Loosen it here so
+-- re-running this script also upgrades existing databases.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conname = 'member_balance_transfers_amount_check'
+      and conrelid = 'member_balance_transfers'::regclass
+      and pg_get_constraintdef(oid) like '%> 0%'
+  ) then
+    alter table member_balance_transfers drop constraint member_balance_transfers_amount_check;
+    alter table member_balance_transfers add constraint member_balance_transfers_amount_check
+      check (amount <> 0);
+  end if;
+end $$;
 
 -- Lightweight in-app notification log. Currently only used to tell
 -- admins/superadmins when a member tops up their own balance, but kept
@@ -512,7 +538,7 @@ declare
   total_transfers numeric;
   total_spent numeric;
 begin
-  select coalesce(sum(amount), 0) into total_transfers
+  select coalesce(sum(amount * exchange_rate_to_base), 0) into total_transfers
   from member_balance_transfers where member_id = target_member_id;
 
   select coalesce(sum(amount * exchange_rate_to_base), 0) into total_spent
@@ -559,20 +585,43 @@ as $$
 declare
   wallet_balance numeric;
   allocated numeric;
+  allocated_cards numeric;
   available numeric;
+  member_balance numeric;
+  base_amount numeric;
 begin
-  select balance_cache into wallet_balance from wallets where family_id = new.family_id;
-  select coalesce(sum(balance), 0) into allocated from members where family_id = new.family_id;
-  available := coalesce(wallet_balance, 0) - allocated;
+  base_amount := new.amount * new.exchange_rate_to_base;
 
-  if new.amount > available then
-    raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
+  if base_amount > 0 then
+    -- Withdrawing from the shared pool into the member's own balance: make
+    -- sure enough unallocated family balance exists (not already claimed by
+    -- another member's balance or a shared card).
+    select balance_cache into wallet_balance from wallets where family_id = new.family_id;
+    select coalesce(sum(balance), 0) into allocated from members where family_id = new.family_id;
+    select coalesce(sum(balance_cache), 0) into allocated_cards from cards where family_id = new.family_id;
+    available := coalesce(wallet_balance, 0) - allocated - allocated_cards;
+
+    if base_amount > available then
+      raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
+    end if;
+  else
+    -- Returning held cash back into the shared pool: make sure the member
+    -- actually has that much currently allocated to them.
+    select balance into member_balance from members where id = new.member_id;
+    if abs(base_amount) > coalesce(member_balance, 0) then
+      raise exception 'Not enough balance to return (your balance: %)', round(coalesce(member_balance, 0), 2);
+    end if;
   end if;
 
   perform recalc_member_balance(new.member_id);
 
   insert into notifications (family_id, type, member_id, amount)
-  values (new.family_id, 'member_topup', new.member_id, new.amount);
+  values (
+    new.family_id,
+    case when base_amount > 0 then 'member_topup' else 'member_return' end,
+    new.member_id,
+    base_amount
+  );
 
   return new;
 end;
@@ -582,6 +631,162 @@ drop trigger if exists trg_member_balance_transfer on member_balance_transfers;
 create trigger trg_member_balance_transfer
   after insert on member_balance_transfers
   for each row execute function handle_member_balance_transfer();
+
+-- ============================================================
+-- 4c. Shared prepaid cards (e.g. a family fuel card). Any member can top
+-- one up from the unallocated family balance, or log a withdrawal/spend
+-- against it. Every member can see every card's live balance.
+-- ============================================================
+create table if not exists cards (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  name text not null,
+  balance_cache numeric not null default 0,
+  created_by uuid not null references members(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+-- Top-ups: money moves from the family's unallocated balance onto the card.
+create table if not exists card_transfers (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  card_id uuid not null references cards(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  currency text not null default 'USD',
+  exchange_rate_to_base numeric not null default 1,
+  created_at timestamptz not null default now()
+);
+
+-- Withdrawals: real spending against the card, drawn from its own balance
+-- (parallel to `transactions` for member spending, but not linked to any
+-- member's personal budget/spending-limit tracking).
+create table if not exists card_transactions (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  card_id uuid not null references cards(id) on delete cascade,
+  member_id uuid not null references members(id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  currency text not null default 'USD',
+  exchange_rate_to_base numeric not null default 1,
+  note text,
+  created_at timestamptz not null default now()
+);
+
+alter table notifications add column if not exists card_id uuid references cards(id) on delete cascade;
+
+alter table cards enable row level security;
+alter table card_transfers enable row level security;
+alter table card_transactions enable row level security;
+
+-- cards: readable by the whole family; only admins/superadmins can create.
+-- No update/delete policy for now — renaming/archiving cards is a later
+-- feature, not needed for balances to work.
+drop policy if exists "cards_select" on cards;
+create policy "cards_select" on cards
+  for select using (family_id in (select my_family_ids()));
+
+drop policy if exists "cards_admin_insert" on cards;
+create policy "cards_admin_insert" on cards
+  for insert with check (is_admin(family_id));
+
+-- card_transfers (top-ups): readable by family; any member can insert as
+-- themselves.
+drop policy if exists "card_transfers_select" on card_transfers;
+create policy "card_transfers_select" on card_transfers
+  for select using (family_id in (select my_family_ids()));
+
+drop policy if exists "card_transfers_insert_self" on card_transfers;
+create policy "card_transfers_insert_self" on card_transfers
+  for insert with check (
+    family_id in (select my_family_ids())
+    and member_id in (select id from members where user_id = auth.uid())
+  );
+
+-- card_transactions (withdrawals/spend): readable by family; any member can
+-- insert as themselves.
+drop policy if exists "card_transactions_select" on card_transactions;
+create policy "card_transactions_select" on card_transactions
+  for select using (family_id in (select my_family_ids()));
+
+drop policy if exists "card_transactions_insert_self" on card_transactions;
+create policy "card_transactions_insert_self" on card_transactions
+  for insert with check (
+    family_id in (select my_family_ids())
+    and member_id in (select id from members where user_id = auth.uid())
+  );
+
+-- Top-up trigger: check enough unallocated family balance exists (cash not
+-- already claimed by a member's balance OR another card), then increase the
+-- card's cached balance and notify the family.
+create or replace function handle_card_transfer()
+returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  wallet_balance numeric;
+  allocated_members numeric;
+  allocated_cards numeric;
+  available numeric;
+  base_amount numeric;
+begin
+  base_amount := new.amount * new.exchange_rate_to_base;
+
+  select balance_cache into wallet_balance from wallets where family_id = new.family_id;
+  select coalesce(sum(balance), 0) into allocated_members from members where family_id = new.family_id;
+  select coalesce(sum(balance_cache), 0) into allocated_cards from cards where family_id = new.family_id;
+  available := coalesce(wallet_balance, 0) - allocated_members - allocated_cards;
+
+  if base_amount > available then
+    raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
+  end if;
+
+  update cards set balance_cache = balance_cache + base_amount where id = new.card_id;
+
+  insert into notifications (family_id, type, member_id, card_id, amount)
+  values (new.family_id, 'card_topup', new.member_id, new.card_id, base_amount);
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_card_transfer on card_transfers;
+create trigger trg_card_transfer
+  after insert on card_transfers
+  for each row execute function handle_card_transfer();
+
+-- Withdrawal trigger: check the card actually has enough balance, then
+-- decrease it and notify the family.
+create or replace function handle_card_transaction()
+returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  card_balance numeric;
+  base_amount numeric;
+begin
+  base_amount := new.amount * new.exchange_rate_to_base;
+
+  select balance_cache into card_balance from cards where id = new.card_id;
+  if base_amount > coalesce(card_balance, 0) then
+    raise exception 'Not enough balance on this card (available: %)', round(coalesce(card_balance, 0), 2);
+  end if;
+
+  update cards set balance_cache = balance_cache - base_amount where id = new.card_id;
+
+  insert into notifications (family_id, type, member_id, card_id, amount)
+  values (new.family_id, 'card_withdraw', new.member_id, new.card_id, base_amount);
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_card_transaction on card_transactions;
+create trigger trg_card_transaction
+  after insert on card_transactions
+  for each row execute function handle_card_transaction();
 
 -- ============================================================
 -- 5. REALTIME
@@ -595,7 +800,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['transactions', 'deposits', 'wallets', 'members', 'planned_payments', 'member_balance_transfers', 'notifications']
+  foreach t in array array['transactions', 'deposits', 'wallets', 'members', 'planned_payments', 'member_balance_transfers', 'notifications', 'cards', 'card_transfers', 'card_transactions']
   loop
     if not exists (
       select 1 from pg_publication_tables

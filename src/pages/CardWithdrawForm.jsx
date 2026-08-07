@@ -2,13 +2,13 @@ import { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getExchangeRate, SUPPORTED_CURRENCIES } from '../lib/exchangeRates'
 
-// Self-serve top-up: moves money from the shared family balance into the
-// current member's own live balance. Always immediate (no approval step) —
-// the server-side trigger checks there's enough unallocated family balance
-// and notifies admins/superadmins.
-export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency, onDone }) {
+// Logs a withdrawal/spend against a shared prepaid card — draws from the
+// card's own balance, unrelated to any member's personal spending limit.
+// No category, per the current spec (may be added later).
+export default function CardWithdrawForm({ familyId, memberId, cardId, baseCurrency, currentBalance, onDone }) {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(baseCurrency)
+  const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -18,20 +18,28 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
     setError(null)
     try {
       const rate = await getExchangeRate(familyId, currency, baseCurrency)
+      const parsed = parseFloat(amount)
 
-      const { error: err } = await supabase.from('member_balance_transfers').insert({
+      if (parsed * rate > currentBalance) {
+        setError(`This card only has ${Number(currentBalance).toFixed(2)} ${baseCurrency} left.`)
+        setBusy(false)
+        return
+      }
+
+      const { error: err } = await supabase.from('card_transactions').insert({
         family_id: familyId,
+        card_id: cardId,
         member_id: memberId,
-        amount: parseFloat(amount),
+        amount: parsed,
         currency,
-        exchange_rate_to_base: rate
+        exchange_rate_to_base: rate,
+        note: note || null
       })
       if (err) throw err
       setAmount('')
+      setNote('')
       onDone?.()
     } catch (err) {
-      // The DB trigger raises a plain exception if there isn't enough
-      // unallocated family balance — Supabase surfaces that as err.message.
       setError(err.message)
     } finally {
       setBusy(false)
@@ -56,9 +64,15 @@ export default function MemberBalanceTransfer({ familyId, memberId, baseCurrency
           </option>
         ))}
       </select>
-      <button type="submit" disabled={busy}>
-        {busy ? 'Adding...' : 'Add to My Balance'}
+      <input
+        placeholder="Note (optional)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <button type="submit" disabled={busy || currentBalance <= 0}>
+        {busy ? 'Logging...' : 'Withdraw from Card'}
       </button>
+      {currentBalance <= 0 && !error && <p className="hint">This card is empty.</p>}
       {error && <p className="status error">{error}</p>}
     </form>
   )

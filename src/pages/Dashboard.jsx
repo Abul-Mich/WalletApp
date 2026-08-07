@@ -2,15 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../AuthContext";
 import DepositForm from "./DepositForm";
-import TransactionForm from "./TransactionForm";
 import TransactionRow from "./TransactionRow";
 import ExchangeRateOverride from "./ExchangeRateOverride";
 import AdminSettings from "./AdminSettings";
 import LimitWarningBanner from "./LimitWarningBanner";
 import PlannedPayments from "./PlannedPayments";
 import ActivityFeed from "./ActivityFeed";
-import MemberBalanceTransfer from "./MemberBalanceTransfer";
 import NotificationBell from "./NotificationBell";
+import CardsSection from "./CardsSection";
+import BottomNav from "./BottomNav";
+import AddActionSheet from "./AddActionSheet";
+import TransactionHistoryModal from "./TransactionHistoryModal";
 import { getMemberSpend } from "../lib/spendingLimits";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
@@ -114,6 +116,7 @@ export default function Dashboard({ familyId }) {
   const [myMember, setMyMember] = useState(null);
   const [invite, setInvite] = useState(null);
   const [wallet, setWallet] = useState(null);
+  const [cards, setCards] = useState([]);
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [txnPage, setTxnPage] = useState(0);
@@ -126,14 +129,26 @@ export default function Dashboard({ familyId }) {
   const [plannedPayments, setPlannedPayments] = useState([]);
   const [activity, setActivity] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [view, setView] = useState("home"); // 'home' | 'settings'
+  const [view, setView] = useState("home"); // 'home' | 'settings' | 'family'
+  const [showAddSheet, setShowAddSheet] = useState(false);
+  const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
+  const [myRecentTransactions, setMyRecentTransactions] = useState([]);
+
+  function handleNavChange(key) {
+    if (key === "family") setView("family");
+    else if (key === "dashboard") setView("home");
+    // 'statistics' and 'me' are placeholders for now — no view yet.
+  }
+  const [showMyHistory, setShowMyHistory] = useState(false);
 
   // Kept in refs so the realtime callback (registered once) can look up
   // current names without re-subscribing every time members/categories change.
   const membersRef = useRef(members);
   const categoriesRef = useRef(categories);
+  const myMemberRef = useRef(myMember);
   membersRef.current = members;
   categoriesRef.current = categories;
+  myMemberRef.current = myMember;
 
   async function loadFamilyAndMembers() {
     const { data: fam } = await supabase
@@ -178,6 +193,15 @@ export default function Dashboard({ familyId }) {
     setWallet(data);
   }
 
+  async function loadCards() {
+    const { data } = await supabase
+      .from("cards")
+      .select("*")
+      .eq("family_id", familyId)
+      .order("created_at");
+    setCards(data || []);
+  }
+
   async function loadCategories() {
     const { data } = await supabase
       .from("categories")
@@ -207,6 +231,22 @@ export default function Dashboard({ familyId }) {
     setHasMoreTxns(page.length === PAGE_SIZE);
     setTxnPage(nextPage);
     if (!reset) setLoadingMore(false);
+  }
+
+  // Dashboard "Last Records" preview: just the current member's 5 most
+  // recent transactions, fetched independently of the family-wide,
+  // paginated transactions list above so it's always correct regardless
+  // of that list's current page.
+  async function loadMyRecentTransactions(memberId) {
+    if (!memberId) return;
+    const { data } = await supabase
+      .from("transactions")
+      .select("*, categories(name), members(display_name)")
+      .eq("family_id", familyId)
+      .eq("member_id", memberId)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    setMyRecentTransactions(data || []);
   }
 
   async function loadBreakdown() {
@@ -270,11 +310,16 @@ export default function Dashboard({ familyId }) {
   }
 
   useEffect(() => {
+    if (myMember?.id) loadMyRecentTransactions(myMember.id);
+  }, [myMember?.id]);
+
+  useEffect(() => {
     let cancelled = false;
     async function loadAll() {
       await Promise.all([
         loadFamilyAndMembers(),
         loadWallet(),
+        loadCards(),
         loadCategories(),
         loadTransactions(),
         loadBreakdown(),
@@ -302,6 +347,16 @@ export default function Dashboard({ familyId }) {
         {
           event: "*",
           schema: "public",
+          table: "cards",
+          filter: `family_id=eq.${familyId}`,
+        },
+        loadCards,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "wallets",
           filter: `family_id=eq.${familyId}`,
         },
@@ -319,6 +374,9 @@ export default function Dashboard({ familyId }) {
           loadTransactions();
           loadBreakdown();
           loadFamilyAndMembers(); // also refreshes mySpend + memberSpends + family budget spend
+          if (myMemberRef.current?.id) {
+            loadMyRecentTransactions(myMemberRef.current.id);
+          }
 
           // In-app "notify me when someone spends" — no push infra, rides
           // this same realtime channel. Only new spends generate an entry.
@@ -423,8 +481,12 @@ export default function Dashboard({ familyId }) {
     (sum, m) => sum + Number(m.balance || 0),
     0,
   );
+  const totalOnCards = cards.reduce(
+    (sum, c) => sum + Number(c.balance_cache || 0),
+    0,
+  );
   const unallocated = wallet
-    ? Number(wallet.balance_cache) - totalAllocated
+    ? Number(wallet.balance_cache) - totalAllocated - totalOnCards
     : null;
 
   if (view === "settings" && amAdmin) {
@@ -479,6 +541,168 @@ export default function Dashboard({ familyId }) {
             }}
           />
         </section>
+
+        <BottomNav active="dashboard" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+        {showAddSheet && (
+          <AddActionSheet
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            currentBalance={Number(myMember.balance || 0)}
+            onClose={() => setShowAddSheet(false)}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (view === "family") {
+    return (
+      <div className="dashboard">
+        <header>
+          <div>
+            <h1>Family</h1>
+            <p className="subtitle">{family.name}</p>
+          </div>
+          <div className="header-actions">
+            {amAdmin && (
+              <NotificationBell
+                familyId={familyId}
+                userId={session.user.id}
+                notifications={notifications}
+                cards={cards}
+                members={members}
+                role={myRole}
+              />
+            )}
+            <ProfileMenuButton
+              myMember={myMember}
+              myRole={myRole}
+              amAdmin={amAdmin}
+              showSettings={amAdmin}
+              onOpenSettings={() => setView("settings")}
+              onSignOut={() => supabase.auth.signOut()}
+            />
+          </div>
+        </header>
+
+        <section className="card">
+          <h2>Family Balance</h2>
+          <p className="balance">
+            {wallet ? Number(wallet.balance_cache).toFixed(2) : "--"}{" "}
+            {family.base_currency}
+          </p>
+          <p className="hint">
+            Actual cash: total deposited minus total spent, live-synced.
+          </p>
+          {unallocated !== null && (
+            <p className="hint">
+              {unallocated.toFixed(2)} {family.base_currency} not yet
+              allocated to any member's balance.
+            </p>
+          )}
+        </section>
+
+        {familyBudgetSpend && (
+          <section className="card">
+            <h2>Family Budget ({familyBudgetSpend.period})</h2>
+            <div className="breakdown-row">
+              <span>Used</span>
+              <span>
+                {familyBudgetSpend.spent.toFixed(2)} /{" "}
+                {familyBudgetSpend.limit.toFixed(2)} {family.base_currency}
+              </span>
+            </div>
+            <div className="breakdown-bar-track">
+              <div
+                className={`breakdown-bar ${
+                  familyBudgetSpend.isOverLimit
+                    ? "over"
+                    : familyBudgetSpend.isNearLimit
+                      ? "near"
+                      : ""
+                }`}
+                style={{
+                  width: `${Math.min(familyBudgetSpend.percentUsed * 100, 100)}%`,
+                }}
+              />
+            </div>
+            <p className="hint">
+              This is a target the admin set, separate from actual cash
+              above.
+            </p>
+          </section>
+        )}
+
+        <CardsSection
+          familyId={familyId}
+          memberId={myMember?.id}
+          baseCurrency={family.base_currency}
+          cards={cards}
+          amAdmin={amAdmin}
+          onChanged={() => {
+            loadCards();
+            loadFamilyAndMembers();
+          }}
+        />
+
+        <section className="card">
+          <h2>Records</h2>
+          {transactions.length === 0 && (
+            <p className="hint">No transactions yet.</p>
+          )}
+          <ul className="txn-list">
+            {transactions.map((t) => (
+              <TransactionRow
+                key={t.id}
+                t={t}
+                familyId={familyId}
+                baseCurrency={family.base_currency}
+                categories={categories}
+                canManage={t.member_id === myMember?.id || amAdmin}
+                onChanged={() => {
+                  loadTransactions();
+                  loadBreakdown();
+                  loadFamilyAndMembers();
+                  if (myMember?.id) loadMyRecentTransactions(myMember.id);
+                }}
+              />
+            ))}
+          </ul>
+          {hasMoreTxns && (
+            <button
+              type="button"
+              className="load-more"
+              disabled={loadingMore}
+              onClick={() => loadTransactions(false)}
+            >
+              {loadingMore ? "Loading..." : "Load 20 More"}
+            </button>
+          )}
+        </section>
+
+        <BottomNav active="family" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+        {showAddSheet && myMember && (
+          <AddActionSheet
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            currentBalance={Number(myMember.balance || 0)}
+            onClose={() => setShowAddSheet(false)}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -497,6 +721,7 @@ export default function Dashboard({ familyId }) {
               userId={session.user.id}
               notifications={notifications}
               members={members}
+              cards={cards}
               role={myRole}
             />
           )}
@@ -513,23 +738,6 @@ export default function Dashboard({ familyId }) {
 
       <LimitWarningBanner spend={mySpend} baseCurrency={family.base_currency} />
 
-      <section className="card">
-        <h2>Family Balance</h2>
-        <p className="balance">
-          {wallet ? Number(wallet.balance_cache).toFixed(2) : "--"}{" "}
-          {family.base_currency}
-        </p>
-        <p className="hint">
-          Actual cash: total deposited minus total spent, live-synced.
-        </p>
-        {unallocated !== null && (
-          <p className="hint">
-            {unallocated.toFixed(2)} {family.base_currency} not yet allocated to
-            any member's balance.
-          </p>
-        )}
-      </section>
-
       {myMember && (
         <section className="card">
           <h2>My Balance</h2>
@@ -539,42 +747,6 @@ export default function Dashboard({ familyId }) {
           <p className="hint">
             Your own share, moved out of the family balance. Spending draws from
             this.
-          </p>
-          <MemberBalanceTransfer
-            familyId={familyId}
-            memberId={myMember.id}
-            baseCurrency={family.base_currency}
-            onDone={loadFamilyAndMembers}
-          />
-        </section>
-      )}
-
-      {familyBudgetSpend && (
-        <section className="card">
-          <h2>Family Budget ({familyBudgetSpend.period})</h2>
-          <div className="breakdown-row">
-            <span>Used</span>
-            <span>
-              {familyBudgetSpend.spent.toFixed(2)} /{" "}
-              {familyBudgetSpend.limit.toFixed(2)} {family.base_currency}
-            </span>
-          </div>
-          <div className="breakdown-bar-track">
-            <div
-              className={`breakdown-bar ${
-                familyBudgetSpend.isOverLimit
-                  ? "over"
-                  : familyBudgetSpend.isNearLimit
-                    ? "near"
-                    : ""
-              }`}
-              style={{
-                width: `${Math.min(familyBudgetSpend.percentUsed * 100, 100)}%`,
-              }}
-            />
-          </div>
-          <p className="hint">
-            This is a target the admin set, separate from actual cash above.
           </p>
         </section>
       )}
@@ -592,6 +764,42 @@ export default function Dashboard({ familyId }) {
         </section>
       )}
 
+      <section className="card">
+        <div className="card-header-row">
+          <h2>Last Records</h2>
+          {myRecentTransactions.length > 0 && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setShowMyHistoryModal(true)}
+            >
+              More
+            </button>
+          )}
+        </div>
+        {myRecentTransactions.length === 0 && (
+          <p className="hint">No transactions yet.</p>
+        )}
+        <ul className="txn-list">
+          {myRecentTransactions.map((t) => (
+            <TransactionRow
+              key={t.id}
+              t={t}
+              familyId={familyId}
+              baseCurrency={family.base_currency}
+              categories={categories}
+              canManage={t.member_id === myMember?.id || amAdmin}
+              onChanged={() => {
+                loadTransactions();
+                loadBreakdown();
+                loadFamilyAndMembers();
+                if (myMember?.id) loadMyRecentTransactions(myMember.id);
+              }}
+            />
+          ))}
+        </ul>
+      </section>
+
       {amAdmin && (
         <section className="card">
           <h2>Add Funds</h2>
@@ -599,18 +807,6 @@ export default function Dashboard({ familyId }) {
             familyId={familyId}
             memberId={myMember.id}
             baseCurrency={family.base_currency}
-          />
-        </section>
-      )}
-
-      {myMember && categories.length > 0 && (
-        <section className="card">
-          <h2>Log an Expense</h2>
-          <TransactionForm
-            familyId={familyId}
-            memberId={myMember.id}
-            baseCurrency={family.base_currency}
-            categories={categories}
           />
         </section>
       )}
@@ -637,40 +833,6 @@ export default function Dashboard({ familyId }) {
       <section className="card">
         <h2>Recent Activity</h2>
         <ActivityFeed events={activity} />
-      </section>
-
-      <section className="card">
-        <h2>Transaction History</h2>
-        {transactions.length === 0 && (
-          <p className="hint">No transactions yet.</p>
-        )}
-        <ul className="txn-list">
-          {transactions.map((t) => (
-            <TransactionRow
-              key={t.id}
-              t={t}
-              familyId={familyId}
-              baseCurrency={family.base_currency}
-              categories={categories}
-              canManage={t.member_id === myMember?.id || amAdmin}
-              onChanged={() => {
-                loadTransactions();
-                loadBreakdown();
-                loadFamilyAndMembers();
-              }}
-            />
-          ))}
-        </ul>
-        {hasMoreTxns && (
-          <button
-            type="button"
-            className="load-more"
-            disabled={loadingMore}
-            onClick={() => loadTransactions(false)}
-          >
-            {loadingMore ? "Loading..." : "Load 20 More"}
-          </button>
-        )}
       </section>
 
       <section className="card">
@@ -729,6 +891,34 @@ export default function Dashboard({ familyId }) {
       <button className="signout" onClick={() => supabase.auth.signOut()}>
         Sign Out
       </button>
+
+      <BottomNav active="dashboard" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+      {showAddSheet && myMember && (
+        <AddActionSheet
+          familyId={familyId}
+          memberId={myMember.id}
+          baseCurrency={family.base_currency}
+          categories={categories}
+          currentBalance={Number(myMember.balance || 0)}
+          onClose={() => setShowAddSheet(false)}
+          onDone={() => {
+            loadFamilyAndMembers();
+            loadTransactions();
+            loadMyRecentTransactions(myMember.id);
+          }}
+        />
+      )}
+
+      {showMyHistoryModal && myMember && (
+        <TransactionHistoryModal
+          familyId={familyId}
+          memberId={myMember.id}
+          baseCurrency={family.base_currency}
+          categories={categories}
+          amAdmin={amAdmin}
+          onClose={() => setShowMyHistoryModal(false)}
+        />
+      )}
     </div>
   );
 }
