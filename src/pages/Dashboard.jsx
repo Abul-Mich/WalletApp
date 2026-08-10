@@ -13,6 +13,8 @@ import CardsSection from "./CardsSection";
 import BottomNav from "./BottomNav";
 import AddActionSheet from "./AddActionSheet";
 import TransactionHistoryModal from "./TransactionHistoryModal";
+import MeProfileCard from "./MeProfileCard";
+import BalanceTransfersAdmin from "./BalanceTransfersAdmin";
 import { getMemberSpend } from "../lib/spendingLimits";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
@@ -129,15 +131,17 @@ export default function Dashboard({ familyId }) {
   const [plannedPayments, setPlannedPayments] = useState([]);
   const [activity, setActivity] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [view, setView] = useState("home"); // 'home' | 'settings' | 'family'
+  const [view, setView] = useState("home"); // 'home' | 'settings' | 'family' | 'me'
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
+  const [showFamilyHistoryModal, setShowFamilyHistoryModal] = useState(false);
   const [myRecentTransactions, setMyRecentTransactions] = useState([]);
 
   function handleNavChange(key) {
     if (key === "family") setView("family");
     else if (key === "dashboard") setView("home");
-    // 'statistics' and 'me' are placeholders for now — no view yet.
+    else if (key === "me") setView("me");
+    // 'statistics' is still a placeholder — no view yet.
   }
   const [showMyHistory, setShowMyHistory] = useState(false);
 
@@ -542,6 +546,21 @@ export default function Dashboard({ familyId }) {
           />
         </section>
 
+        <section className="card">
+          <h2>Balance Transfers</h2>
+          <p className="hint">
+            Every withdraw-from-main / return-to-main a member has made.
+            Correct or remove mistaken entries here.
+          </p>
+          <BalanceTransfersAdmin
+            baseCurrency={family.base_currency}
+            onChanged={() => {
+              loadFamilyAndMembers();
+              if (myMember?.id) loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        </section>
+
         <BottomNav active="dashboard" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
         {showAddSheet && (
           <AddActionSheet
@@ -653,12 +672,23 @@ export default function Dashboard({ familyId }) {
         />
 
         <section className="card">
-          <h2>Records</h2>
+          <div className="card-header-row">
+            <h2>Records</h2>
+            {transactions.length > 0 && (
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setShowFamilyHistoryModal(true)}
+              >
+                More
+              </button>
+            )}
+          </div>
           {transactions.length === 0 && (
             <p className="hint">No transactions yet.</p>
           )}
           <ul className="txn-list">
-            {transactions.map((t) => (
+            {transactions.slice(0, 8).map((t) => (
               <TransactionRow
                 key={t.id}
                 t={t}
@@ -675,19 +705,100 @@ export default function Dashboard({ familyId }) {
               />
             ))}
           </ul>
-          {hasMoreTxns && (
-            <button
-              type="button"
-              className="load-more"
-              disabled={loadingMore}
-              onClick={() => loadTransactions(false)}
-            >
-              {loadingMore ? "Loading..." : "Load 20 More"}
-            </button>
-          )}
         </section>
 
+        {showFamilyHistoryModal && (
+          <TransactionHistoryModal
+            familyId={familyId}
+            viewerId={myMember?.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            members={members}
+            amAdmin={amAdmin}
+            onClose={() => setShowFamilyHistoryModal(false)}
+          />
+        )}
+
         <BottomNav active="family" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+        {showAddSheet && myMember && (
+          <AddActionSheet
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            currentBalance={Number(myMember.balance || 0)}
+            onClose={() => setShowAddSheet(false)}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (view === "me") {
+    return (
+      <div className="dashboard">
+        <header>
+          <div>
+            <h1>Me</h1>
+            <p className="subtitle">{myMember?.display_name}</p>
+          </div>
+          <div className="header-actions">
+            <ProfileMenuButton
+              myMember={myMember}
+              myRole={myRole}
+              amAdmin={amAdmin}
+              showSettings={amAdmin}
+              onOpenSettings={() => setView("settings")}
+              onSignOut={() => supabase.auth.signOut()}
+            />
+          </div>
+        </header>
+
+        <MeProfileCard
+          myMember={myMember}
+          session={session}
+          family={family}
+          myRole={myRole}
+          onSaved={loadFamilyAndMembers}
+        />
+
+        {myMember && (
+          <section className="card">
+            <h2>My Balance</h2>
+            <p className="balance">
+              {Number(myMember.balance || 0).toFixed(2)} {family.base_currency}
+            </p>
+            <p className="hint">
+              Your own share, moved out of the family balance. Spending draws
+              from this.
+            </p>
+          </section>
+        )}
+
+        {mySpend && (
+          <section className="card">
+            <h2>My Balance This Period ({mySpend.period})</h2>
+            <p className="balance">
+              {mySpend.spent.toFixed(2)} / {mySpend.limit.toFixed(2)}{" "}
+              {family.base_currency}
+            </p>
+            <p className="hint">
+              How much you've drawn from the family budget so far this
+              period.
+            </p>
+          </section>
+        )}
+
+        <button className="signout" onClick={() => supabase.auth.signOut()}>
+          Sign Out
+        </button>
+
+        <BottomNav active="me" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
         {showAddSheet && myMember && (
           <AddActionSheet
             familyId={familyId}
@@ -888,10 +999,6 @@ export default function Dashboard({ familyId }) {
         </section>
       )}
 
-      <button className="signout" onClick={() => supabase.auth.signOut()}>
-        Sign Out
-      </button>
-
       <BottomNav active="dashboard" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
       {showAddSheet && myMember && (
         <AddActionSheet
@@ -913,6 +1020,7 @@ export default function Dashboard({ familyId }) {
         <TransactionHistoryModal
           familyId={familyId}
           memberId={myMember.id}
+          viewerId={myMember.id}
           baseCurrency={family.base_currency}
           categories={categories}
           amAdmin={amAdmin}

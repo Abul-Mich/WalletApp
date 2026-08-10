@@ -6,9 +6,14 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
   const [selectedCardId, setSelectedCardId] = useState(null)
   const selectedCard = cards.find((c) => c.id === selectedCardId) || null
   const [showNewCard, setShowNewCard] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  const activeCards = cards.filter((c) => !c.archived)
+  const archivedCards = cards.filter((c) => c.archived)
+  const visibleCards = showArchived ? cards : activeCards
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -61,15 +66,22 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
         </form>
       )}
 
-      {cards.length === 0 && !showNewCard && (
+      {activeCards.length === 0 && !showNewCard && (
         <p className="hint">No shared cards yet.</p>
       )}
 
       <ul className="card-list">
-        {cards.map((c) => (
+        {visibleCards.map((c) => (
           <li key={c.id}>
-            <button type="button" className="card-list-item" onClick={() => setSelectedCardId(c.id)}>
-              <span>{c.name}</span>
+            <button
+              type="button"
+              className={`card-list-item ${c.archived ? 'archived' : ''}`}
+              onClick={() => setSelectedCardId(c.id)}
+            >
+              <span>
+                {c.name}
+                {c.archived && <span className="pill-archived">Archived</span>}
+              </span>
               <span className="balance-inline">
                 {Number(c.balance_cache).toFixed(2)} {baseCurrency}
               </span>
@@ -78,12 +90,23 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
         ))}
       </ul>
 
+      {archivedCards.length > 0 && (
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => setShowArchived((v) => !v)}
+        >
+          {showArchived ? 'Hide archived cards' : `Show ${archivedCards.length} archived card${archivedCards.length > 1 ? 's' : ''}`}
+        </button>
+      )}
+
       {selectedCard && (
         <CardDetailModal
           familyId={familyId}
           memberId={memberId}
           card={selectedCard}
           baseCurrency={baseCurrency}
+          amAdmin={amAdmin}
           onClose={() => setSelectedCardId(null)}
           onChanged={onChanged}
         />

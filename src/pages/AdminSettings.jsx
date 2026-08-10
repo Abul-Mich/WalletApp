@@ -220,6 +220,35 @@ export default function AdminSettings({
     }
   }
 
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+
+  async function deleteFamily() {
+    if (deleteConfirmText.trim() !== family.name) return;
+    if (
+      !confirm(
+        `This permanently deletes "${family.name}" — every member, transaction, card, and balance. This cannot be undone. Continue?`,
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: err } = await supabase
+        .from("families")
+        .delete()
+        .eq("id", familyId);
+      if (err) throw err;
+      // The family row (and every row that references it) is gone,
+      // including this device's own member row — the cleanest way back to
+      // a consistent state is to just reload, so App.jsx's membership check
+      // runs fresh and lands on FamilySetup.
+      window.location.reload();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="settings-shell">
       <div className="settings-overview">
@@ -512,6 +541,35 @@ export default function AdminSettings({
                   </div>
                 </div>
               ))}
+          </div>
+        </section>
+      )}
+
+      {amSuperadmin && (
+        <section className="settings-card danger-zone">
+          <div className="settings-card-header">
+            <div>
+              <h3 className="subsection">Danger Zone</h3>
+              <p className="hint">
+                Permanently deletes "{family.name}" — every member,
+                transaction, card, and balance. This cannot be undone.
+              </p>
+            </div>
+          </div>
+          <div className="settings-form">
+            <input
+              placeholder={`Type "${family.name}" to confirm`}
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+            />
+            <button
+              type="button"
+              className="remove-btn"
+              disabled={busy || deleteConfirmText.trim() !== family.name}
+              onClick={deleteFamily}
+            >
+              Delete Family
+            </button>
           </div>
         </section>
       )}

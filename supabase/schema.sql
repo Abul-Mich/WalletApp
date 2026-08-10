@@ -261,6 +261,14 @@ drop policy if exists "families_update" on families;
 create policy "families_update" on families
   for update using (is_admin(id));
 
+-- Deleting a family is irreversible and cascades to every table referencing
+-- family_id (members, wallets, transactions, cards, categories, ...), so
+-- it's restricted to the superadmin — a regular admin can manage settings
+-- but not erase the whole family's data.
+drop policy if exists "families_delete_superadmin" on families;
+create policy "families_delete_superadmin" on families
+  for delete using (is_superadmin(id));
+
 -- members: readable by anyone in the same family; writable by admins/self,
 -- with role-change privilege escalation blocked by a trigger below (RLS
 -- alone can't compare old vs. new column values on UPDATE).
@@ -407,6 +415,17 @@ create policy "member_transfers_insert_self" on member_balance_transfers
     family_id in (select my_family_ids())
     and member_id in (select id from members where user_id = auth.uid())
   );
+
+-- Corrections (fixing a mistyped amount, removing a bad entry) are
+-- superadmin/admin only — a self-serve top-up isn't something a member can
+-- quietly edit after the fact.
+drop policy if exists "member_transfers_update_admin" on member_balance_transfers;
+create policy "member_transfers_update_admin" on member_balance_transfers
+  for update using (is_admin(family_id));
+
+drop policy if exists "member_transfers_delete_admin" on member_balance_transfers;
+create policy "member_transfers_delete_admin" on member_balance_transfers
+  for delete using (is_admin(family_id));
 
 -- notifications: admins/superadmins only (that's who needs to see a member
 -- topped up their balance). Rows are only ever written by the trigger below.
@@ -574,9 +593,56 @@ create trigger trg_transactions_recalc_member_balance
   after insert or update or delete on transactions
   for each row execute function trg_fn_recalc_member_balance_on_txn();
 
+-- 4f. Enforce that a member can only log an expense they can actually
+-- afford out of their own balance — without this, "My Balance" is just a
+-- number that gets displayed, not a real wallet with a spending limit.
+-- Runs BEFORE insert/update (so it can block the write), compares against
+-- the *change* in claim on the member's balance so editing an existing
+-- transaction down (or to a different member) doesn't get double-counted.
+create or replace function check_transaction_covers_balance()
+returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  old_base_amount numeric;
+  new_base_amount numeric;
+  member_changed boolean;
+  target_member_balance numeric;
+  delta numeric;
+begin
+  new_base_amount := new.amount * new.exchange_rate_to_base;
+  member_changed := TG_OP = 'UPDATE' and old.member_id is distinct from new.member_id;
+  old_base_amount := case
+    when TG_OP = 'UPDATE' and not member_changed then old.amount * old.exchange_rate_to_base
+    else 0
+  end;
+  delta := new_base_amount - old_base_amount;
+
+  if delta > 0 then
+    select balance into target_member_balance from members where id = new.member_id;
+    if delta > coalesce(target_member_balance, 0) then
+      raise exception 'Not enough balance to log this expense (your balance: %)',
+        round(coalesce(target_member_balance, 0), 2);
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_transactions_check_balance on transactions;
+create trigger trg_transactions_check_balance
+  before insert or update on transactions
+  for each row execute function check_transaction_covers_balance();
+
 -- 4e. When a member tops up their own balance: check the family actually has
 -- that much unallocated cash (wallet balance minus what's already allocated
 -- to every member), recompute the member's balance, and notify admins.
+-- Also handles admin corrections (UPDATE/DELETE) — those re-run the same
+-- validation against the *change* in amount, then always recompute the
+-- member's balance from scratch via recalc_member_balance() so the cached
+-- number never drifts from the underlying rows.
 create or replace function handle_member_balance_transfer()
 returns trigger
 language plpgsql
@@ -588,40 +654,55 @@ declare
   allocated_cards numeric;
   available numeric;
   member_balance numeric;
-  base_amount numeric;
+  old_base_amount numeric;
+  new_base_amount numeric;
+  delta numeric;
+  affected_member uuid;
 begin
-  base_amount := new.amount * new.exchange_rate_to_base;
+  if TG_OP = 'DELETE' then
+    -- Removing a bad entry always frees up (or reduces) an allocation —
+    -- no availability check needed, just recompute.
+    perform recalc_member_balance(old.member_id);
+    return old;
+  end if;
 
-  if base_amount > 0 then
-    -- Withdrawing from the shared pool into the member's own balance: make
-    -- sure enough unallocated family balance exists (not already claimed by
-    -- another member's balance or a shared card).
+  old_base_amount := case when TG_OP = 'UPDATE' then old.amount * old.exchange_rate_to_base else 0 end;
+  new_base_amount := new.amount * new.exchange_rate_to_base;
+  delta := new_base_amount - old_base_amount;
+  affected_member := new.member_id;
+
+  if delta > 0 then
+    -- Net effect of this insert/edit is claiming MORE from the shared pool
+    -- (either a bigger top-up, or a smaller return): make sure enough
+    -- unallocated family balance exists.
     select balance_cache into wallet_balance from wallets where family_id = new.family_id;
     select coalesce(sum(balance), 0) into allocated from members where family_id = new.family_id;
     select coalesce(sum(balance_cache), 0) into allocated_cards from cards where family_id = new.family_id;
     available := coalesce(wallet_balance, 0) - allocated - allocated_cards;
 
-    if base_amount > available then
+    if delta > available then
       raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
     end if;
-  else
-    -- Returning held cash back into the shared pool: make sure the member
-    -- actually has that much currently allocated to them.
+  elsif delta < 0 then
+    -- Net effect is claiming LESS / returning more: make sure the member
+    -- currently has enough allocated to cover it.
     select balance into member_balance from members where id = new.member_id;
-    if abs(base_amount) > coalesce(member_balance, 0) then
+    if abs(delta) > coalesce(member_balance, 0) then
       raise exception 'Not enough balance to return (your balance: %)', round(coalesce(member_balance, 0), 2);
     end if;
   end if;
 
-  perform recalc_member_balance(new.member_id);
+  perform recalc_member_balance(affected_member);
 
-  insert into notifications (family_id, type, member_id, amount)
-  values (
-    new.family_id,
-    case when base_amount > 0 then 'member_topup' else 'member_return' end,
-    new.member_id,
-    base_amount
-  );
+  if TG_OP = 'INSERT' then
+    insert into notifications (family_id, type, member_id, amount)
+    values (
+      new.family_id,
+      case when new_base_amount > 0 then 'member_topup' else 'member_return' end,
+      new.member_id,
+      new_base_amount
+    );
+  end if;
 
   return new;
 end;
@@ -629,7 +710,7 @@ $$;
 
 drop trigger if exists trg_member_balance_transfer on member_balance_transfers;
 create trigger trg_member_balance_transfer
-  after insert on member_balance_transfers
+  after insert or update or delete on member_balance_transfers
   for each row execute function handle_member_balance_transfer();
 
 -- ============================================================
@@ -642,9 +723,11 @@ create table if not exists cards (
   family_id uuid not null references families(id) on delete cascade,
   name text not null,
   balance_cache numeric not null default 0,
+  archived boolean not null default false,
   created_by uuid not null references members(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+alter table cards add column if not exists archived boolean not null default false;
 
 -- Top-ups: money moves from the family's unallocated balance onto the card.
 create table if not exists card_transfers (
@@ -680,8 +763,8 @@ alter table card_transfers enable row level security;
 alter table card_transactions enable row level security;
 
 -- cards: readable by the whole family; only admins/superadmins can create.
--- No update/delete policy for now — renaming/archiving cards is a later
--- feature, not needed for balances to work.
+-- Renaming/archiving a card (admin/superadmin only, balance_cache itself is
+-- still only ever touched by the trigger functions below).
 drop policy if exists "cards_select" on cards;
 create policy "cards_select" on cards
   for select using (family_id in (select my_family_ids()));
@@ -689,6 +772,10 @@ create policy "cards_select" on cards
 drop policy if exists "cards_admin_insert" on cards;
 create policy "cards_admin_insert" on cards
   for insert with check (is_admin(family_id));
+
+drop policy if exists "cards_admin_update" on cards;
+create policy "cards_admin_update" on cards
+  for update using (is_admin(family_id));
 
 -- card_transfers (top-ups): readable by family; any member can insert as
 -- themselves.
@@ -703,6 +790,14 @@ create policy "card_transfers_insert_self" on card_transfers
     and member_id in (select id from members where user_id = auth.uid())
   );
 
+drop policy if exists "card_transfers_update_admin" on card_transfers;
+create policy "card_transfers_update_admin" on card_transfers
+  for update using (is_admin(family_id));
+
+drop policy if exists "card_transfers_delete_admin" on card_transfers;
+create policy "card_transfers_delete_admin" on card_transfers
+  for delete using (is_admin(family_id));
+
 -- card_transactions (withdrawals/spend): readable by family; any member can
 -- insert as themselves.
 drop policy if exists "card_transactions_select" on card_transactions;
@@ -716,9 +811,41 @@ create policy "card_transactions_insert_self" on card_transactions
     and member_id in (select id from members where user_id = auth.uid())
   );
 
+drop policy if exists "card_transactions_update_admin" on card_transactions;
+create policy "card_transactions_update_admin" on card_transactions
+  for update using (is_admin(family_id));
+
+drop policy if exists "card_transactions_delete_admin" on card_transactions;
+create policy "card_transactions_delete_admin" on card_transactions
+  for delete using (is_admin(family_id));
+
+-- Recomputes a card's cached balance from scratch (all top-ups minus all
+-- withdrawals, in base currency) — same "recompute from scratch" pattern as
+-- recalc_member_balance(), so UPDATE/DELETE corrections on the underlying
+-- rows can never leave balance_cache drifted from reality.
+create or replace function recalc_card_balance(target_card_id uuid)
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  total_topups numeric;
+  total_withdrawals numeric;
+begin
+  select coalesce(sum(amount * exchange_rate_to_base), 0) into total_topups
+  from card_transfers where card_id = target_card_id;
+  select coalesce(sum(amount * exchange_rate_to_base), 0) into total_withdrawals
+  from card_transactions where card_id = target_card_id;
+
+  update cards set balance_cache = total_topups - total_withdrawals
+  where id = target_card_id;
+end;
+$$;
+
 -- Top-up trigger: check enough unallocated family balance exists (cash not
--- already claimed by a member's balance OR another card), then increase the
--- card's cached balance and notify the family.
+-- already claimed by a member's balance OR another card), then recompute
+-- the card's cached balance and notify the family. Also handles admin
+-- corrections (UPDATE/DELETE), validated against the *change* in amount.
 create or replace function handle_card_transfer()
 returns trigger
 language plpgsql
@@ -729,23 +856,44 @@ declare
   allocated_members numeric;
   allocated_cards numeric;
   available numeric;
-  base_amount numeric;
+  old_base_amount numeric;
+  new_base_amount numeric;
+  delta numeric;
+  card_archived boolean;
+  affected_card uuid;
 begin
-  base_amount := new.amount * new.exchange_rate_to_base;
-
-  select balance_cache into wallet_balance from wallets where family_id = new.family_id;
-  select coalesce(sum(balance), 0) into allocated_members from members where family_id = new.family_id;
-  select coalesce(sum(balance_cache), 0) into allocated_cards from cards where family_id = new.family_id;
-  available := coalesce(wallet_balance, 0) - allocated_members - allocated_cards;
-
-  if base_amount > available then
-    raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
+  if TG_OP = 'DELETE' then
+    perform recalc_card_balance(old.card_id);
+    return old;
   end if;
 
-  update cards set balance_cache = balance_cache + base_amount where id = new.card_id;
+  select archived into card_archived from cards where id = new.card_id;
+  if coalesce(card_archived, false) then
+    raise exception 'This card is archived and can no longer be topped up';
+  end if;
 
-  insert into notifications (family_id, type, member_id, card_id, amount)
-  values (new.family_id, 'card_topup', new.member_id, new.card_id, base_amount);
+  old_base_amount := case when TG_OP = 'UPDATE' then old.amount * old.exchange_rate_to_base else 0 end;
+  new_base_amount := new.amount * new.exchange_rate_to_base;
+  delta := new_base_amount - old_base_amount;
+  affected_card := new.card_id;
+
+  if delta > 0 then
+    select balance_cache into wallet_balance from wallets where family_id = new.family_id;
+    select coalesce(sum(balance), 0) into allocated_members from members where family_id = new.family_id;
+    select coalesce(sum(balance_cache), 0) into allocated_cards from cards where family_id = new.family_id;
+    available := coalesce(wallet_balance, 0) - allocated_members - allocated_cards;
+
+    if delta > available then
+      raise exception 'Not enough unallocated family balance (available: %)', round(available, 2);
+    end if;
+  end if;
+
+  perform recalc_card_balance(affected_card);
+
+  if TG_OP = 'INSERT' then
+    insert into notifications (family_id, type, member_id, card_id, amount)
+    values (new.family_id, 'card_topup', new.member_id, new.card_id, new_base_amount);
+  end if;
 
   return new;
 end;
@@ -753,11 +901,13 @@ $$;
 
 drop trigger if exists trg_card_transfer on card_transfers;
 create trigger trg_card_transfer
-  after insert on card_transfers
+  after insert or update or delete on card_transfers
   for each row execute function handle_card_transfer();
 
 -- Withdrawal trigger: check the card actually has enough balance, then
--- decrease it and notify the family.
+-- recompute the card's cached balance and notify the family. Also handles
+-- admin corrections (UPDATE/DELETE), validated against the *change* in
+-- amount.
 create or replace function handle_card_transaction()
 returns trigger
 language plpgsql
@@ -765,19 +915,37 @@ security definer
 as $$
 declare
   card_balance numeric;
-  base_amount numeric;
+  card_archived boolean;
+  old_base_amount numeric;
+  new_base_amount numeric;
+  delta numeric;
+  affected_card uuid;
 begin
-  base_amount := new.amount * new.exchange_rate_to_base;
+  if TG_OP = 'DELETE' then
+    perform recalc_card_balance(old.card_id);
+    return old;
+  end if;
 
-  select balance_cache into card_balance from cards where id = new.card_id;
-  if base_amount > coalesce(card_balance, 0) then
+  select balance_cache, archived into card_balance, card_archived from cards where id = new.card_id;
+  if coalesce(card_archived, false) then
+    raise exception 'This card is archived and can no longer be used';
+  end if;
+
+  old_base_amount := case when TG_OP = 'UPDATE' then old.amount * old.exchange_rate_to_base else 0 end;
+  new_base_amount := new.amount * new.exchange_rate_to_base;
+  delta := new_base_amount - old_base_amount;
+  affected_card := new.card_id;
+
+  if delta > coalesce(card_balance, 0) then
     raise exception 'Not enough balance on this card (available: %)', round(coalesce(card_balance, 0), 2);
   end if;
 
-  update cards set balance_cache = balance_cache - base_amount where id = new.card_id;
+  perform recalc_card_balance(affected_card);
 
-  insert into notifications (family_id, type, member_id, card_id, amount)
-  values (new.family_id, 'card_withdraw', new.member_id, new.card_id, base_amount);
+  if TG_OP = 'INSERT' then
+    insert into notifications (family_id, type, member_id, card_id, amount)
+    values (new.family_id, 'card_withdraw', new.member_id, new.card_id, new_base_amount);
+  end if;
 
   return new;
 end;
@@ -785,7 +953,7 @@ $$;
 
 drop trigger if exists trg_card_transaction on card_transactions;
 create trigger trg_card_transaction
-  after insert on card_transactions
+  after insert or update or delete on card_transactions
   for each row execute function handle_card_transaction();
 
 -- ============================================================

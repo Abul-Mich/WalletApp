@@ -4,9 +4,10 @@ import { supabase } from './supabaseClient'
 import Login from './pages/Login'
 import FamilySetup from './pages/FamilySetup'
 import Dashboard from './pages/Dashboard'
+import ResetPassword from './pages/ResetPassword'
 
 export default function App() {
-  const { session, loading } = useAuth()
+  const { session, loading, passwordRecovery } = useAuth()
   const [checkingMembership, setCheckingMembership] = useState(true)
   const [familyId, setFamilyId] = useState(null)
 
@@ -42,6 +43,8 @@ export default function App() {
       cancelled = true
     }
   }, [session])
+
+  if (passwordRecovery) return <ResetPassword />
 
   if (loading || checkingMembership) {
     return (
