@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { supabase } from '../supabaseClient'
-import TransactionRow from './TransactionRow'
+import { useEffect, useState } from "react";
+import { supabase } from "../supabaseClient";
+import TransactionRow from "./TransactionRow";
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 20;
 
 // Paginated popup of transaction history. Scoped to a single member when
 // `memberId` is passed (used from the Dashboard's "Last Records"); shows
@@ -21,75 +21,106 @@ export default function TransactionHistoryModal({
   categories,
   members,
   amAdmin,
-  onClose
+  onClose,
 }) {
-  const [rows, setRows] = useState([])
-  const [page, setPage] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
+  const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const [showFilters, setShowFilters] = useState(false)
-  const [categoryId, setCategoryId] = useState('')
-  const [filterMemberId, setFilterMemberId] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-  const [search, setSearch] = useState('')
+  const [showFilters, setShowFilters] = useState(false);
+  const [categoryId, setCategoryId] = useState("");
+  const [filterMemberId, setFilterMemberId] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
 
   const filtersActive =
-    categoryId || filterMemberId || dateFrom || dateTo || search.trim()
+    categoryId || filterMemberId || dateFrom || dateTo || search.trim();
+  const effectiveViewerId = viewerId ?? memberId;
 
-  function buildQuery(from, to) {
+  function buildTransactionQuery(from, to) {
     let query = supabase
-      .from('transactions')
-      .select('*, categories(name), members(display_name)')
-      .eq('family_id', familyId)
-      .order('created_at', { ascending: false })
-      .range(from, to)
+      .from("transactions")
+      .select("*")
+      .eq("family_id", familyId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
 
-    if (memberId) query = query.eq('member_id', memberId)
-    if (categoryId) query = query.eq('category_id', categoryId)
-    if (!memberId && filterMemberId) query = query.eq('member_id', filterMemberId)
-    if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00`)
-    if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59`)
-    if (search.trim()) query = query.ilike('note', `%${search.trim()}%`)
+    if (memberId) query = query.eq("member_id", memberId);
+    if (categoryId) query = query.eq("category_id", categoryId);
+    if (!memberId && filterMemberId)
+      query = query.eq("member_id", filterMemberId);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59`);
+    if (search.trim()) query = query.ilike("note", `%${search.trim()}%`);
 
-    return query
+    return query;
+  }
+
+  function buildCardQuery(from, to) {
+    let query = supabase
+      .from("card_transactions")
+      .select("*")
+      .eq("family_id", familyId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (memberId) query = query.eq("member_id", memberId);
+    if (!memberId && filterMemberId)
+      query = query.eq("member_id", filterMemberId);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59`);
+    if (search.trim()) query = query.ilike("note", `%${search.trim()}%`);
+
+    return query;
   }
 
   async function load(reset = true) {
-    const nextPage = reset ? 0 : page + 1
-    const from = nextPage * PAGE_SIZE
-    const to = from + PAGE_SIZE - 1
+    const nextPage = reset ? 0 : page + 1;
+    const from = nextPage * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
 
-    if (reset) setLoading(true)
-    else setLoadingMore(true)
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
 
-    const { data } = await buildQuery(from, to)
+    const [{ data: normalRows }, { data: cardRows }] = await Promise.all([
+      buildTransactionQuery(from, to),
+      buildCardQuery(from, to),
+    ]);
 
-    const chunk = data || []
-    setRows((prev) => (reset ? chunk : [...prev, ...chunk]))
-    setHasMore(chunk.length === PAGE_SIZE)
-    setPage(nextPage)
-    setLoading(false)
-    setLoadingMore(false)
+    const normal = (normalRows || []).map((t) => ({
+      ...t,
+      kind: "transaction",
+    }));
+    const cards = (cardRows || []).map((t) => ({ ...t, kind: "card" }));
+    const chunk = [...normal, ...cards].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at),
+    );
+
+    setRows((prev) => (reset ? chunk : [...prev, ...chunk]));
+    setHasMore(chunk.length === PAGE_SIZE);
+    setPage(nextPage);
+    setLoading(false);
+    setLoadingMore(false);
   }
 
   useEffect(() => {
-    load(true)
+    load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [memberId, categoryId, filterMemberId, dateFrom, dateTo, search])
+  }, [memberId, categoryId, filterMemberId, dateFrom, dateTo, search]);
 
   function handleChanged() {
-    load(true)
+    load(true);
   }
 
   function clearFilters() {
-    setCategoryId('')
-    setFilterMemberId('')
-    setDateFrom('')
-    setDateTo('')
-    setSearch('')
+    setCategoryId("");
+    setFilterMemberId("");
+    setDateFrom("");
+    setDateTo("");
+    setSearch("");
   }
 
   return (
@@ -97,10 +128,20 @@ export default function TransactionHistoryModal({
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-handle" />
         <div className="sheet-header">
-          <h2>{memberId ? 'My Transactions' : 'Family Transactions'}</h2>
-          <button type="button" className="sheet-close" aria-label="Close" onClick={onClose}>
+          <h2>{memberId ? "My Transactions" : "Family Transactions"}</h2>
+          <button
+            type="button"
+            className="sheet-close"
+            aria-label="Close"
+            onClick={onClose}
+          >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <path
+                d="M6 6l12 12M18 6L6 18"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
         </div>
@@ -111,8 +152,8 @@ export default function TransactionHistoryModal({
             className="link-button filter-toggle"
             onClick={() => setShowFilters((v) => !v)}
           >
-            {showFilters ? 'Hide filters' : 'Filters'}
-            {filtersActive && !showFilters ? ' •' : ''}
+            {showFilters ? "Hide filters" : "Filters"}
+            {filtersActive && !showFilters ? " •" : ""}
           </button>
 
           {showFilters && (
@@ -123,7 +164,10 @@ export default function TransactionHistoryModal({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+              >
                 <option value="">All categories</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -132,7 +176,10 @@ export default function TransactionHistoryModal({
                 ))}
               </select>
               {!memberId && members && members.length > 0 && (
-                <select value={filterMemberId} onChange={(e) => setFilterMemberId(e.target.value)}>
+                <select
+                  value={filterMemberId}
+                  onChange={(e) => setFilterMemberId(e.target.value)}
+                >
                   <option value="">All members</option>
                   {members.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -157,7 +204,11 @@ export default function TransactionHistoryModal({
                 />
               </div>
               {filtersActive && (
-                <button type="button" className="link-button" onClick={clearFilters}>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={clearFilters}
+                >
                   Clear filters
                 </button>
               )}
@@ -167,7 +218,9 @@ export default function TransactionHistoryModal({
           {loading && <p className="hint">Loading...</p>}
           {!loading && rows.length === 0 && (
             <p className="hint">
-              {filtersActive ? 'No transactions match these filters.' : 'No transactions yet.'}
+              {filtersActive
+                ? "No transactions match these filters."
+                : "No transactions yet."}
             </p>
           )}
           <ul className="txn-list">
@@ -178,7 +231,8 @@ export default function TransactionHistoryModal({
                 familyId={familyId}
                 baseCurrency={baseCurrency}
                 categories={categories}
-                canManage={amAdmin || t.member_id === viewerId}
+                members={members}
+                canManage={amAdmin || t.member_id === effectiveViewerId}
                 onChanged={handleChanged}
               />
             ))}
@@ -190,11 +244,11 @@ export default function TransactionHistoryModal({
               disabled={loadingMore}
               onClick={() => load(false)}
             >
-              {loadingMore ? 'Loading...' : 'Load 20 More'}
+              {loadingMore ? "Loading..." : "Load 20 More"}
             </button>
           )}
         </div>
       </div>
     </div>
-  )
+  );
 }

@@ -223,16 +223,32 @@ export default function Dashboard({ familyId }) {
     const to = from + PAGE_SIZE - 1;
 
     if (!reset) setLoadingMore(true);
-    const { data } = await supabase
-      .from("transactions")
-      .select("*, categories(name), members(display_name)")
-      .eq("family_id", familyId)
-      .order("created_at", { ascending: false })
-      .range(from, to);
 
-    const page = data || [];
+    const [{ data: normalRows }, { data: cardRows }] = await Promise.all([
+      supabase
+        .from("transactions")
+        .select("*")
+        .eq("family_id", familyId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("card_transactions")
+        .select("*")
+        .eq("family_id", familyId)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    const normal = (normalRows || []).map((t) => ({
+      ...t,
+      kind: "transaction",
+    }));
+    const cards = (cardRows || []).map((t) => ({ ...t, kind: "card" }));
+    const merged = [...normal, ...cards].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at),
+    );
+
+    const page = merged.slice(from, to + 1);
     setTransactions((prev) => (reset ? page : [...prev, ...page]));
-    setHasMoreTxns(page.length === PAGE_SIZE);
+    setHasMoreTxns(merged.length > to + 1);
     setTxnPage(nextPage);
     if (!reset) setLoadingMore(false);
   }
@@ -243,14 +259,30 @@ export default function Dashboard({ familyId }) {
   // of that list's current page.
   async function loadMyRecentTransactions(memberId) {
     if (!memberId) return;
-    const { data } = await supabase
-      .from("transactions")
-      .select("*, categories(name), members(display_name)")
-      .eq("family_id", familyId)
-      .eq("member_id", memberId)
-      .order("created_at", { ascending: false })
-      .limit(5);
-    setMyRecentTransactions(data || []);
+
+    const [{ data: normalRows }, { data: cardRows }] = await Promise.all([
+      supabase
+        .from("transactions")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("member_id", memberId)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("card_transactions")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("member_id", memberId)
+        .order("created_at", { ascending: false })
+        .limit(5),
+    ]);
+
+    const rows = [
+      ...(normalRows || []).map((t) => ({ ...t, kind: "transaction" })),
+      ...(cardRows || []).map((t) => ({ ...t, kind: "card" })),
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    setMyRecentTransactions(rows.slice(0, 5));
   }
 
   async function loadBreakdown() {
@@ -416,6 +448,23 @@ export default function Dashboard({ familyId }) {
         {
           event: "*",
           schema: "public",
+          table: "card_transactions",
+          filter: `family_id=eq.${familyId}`,
+        },
+        () => {
+          loadTransactions();
+          loadCards();
+          loadFamilyAndMembers();
+          if (myMemberRef.current?.id) {
+            loadMyRecentTransactions(myMemberRef.current.id);
+          }
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "deposits",
           filter: `family_id=eq.${familyId}`,
         },
@@ -549,8 +598,8 @@ export default function Dashboard({ familyId }) {
         <section className="card">
           <h2>Balance Transfers</h2>
           <p className="hint">
-            Every withdraw-from-main / return-to-main a member has made.
-            Correct or remove mistaken entries here.
+            Every withdraw-from-main / return-to-main a member has made. Correct
+            or remove mistaken entries here.
           </p>
           <BalanceTransfersAdmin
             baseCurrency={family.base_currency}
@@ -561,7 +610,11 @@ export default function Dashboard({ familyId }) {
           />
         </section>
 
-        <BottomNav active="dashboard" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+        <BottomNav
+          active="dashboard"
+          onChange={handleNavChange}
+          onAddClick={() => setShowAddSheet(true)}
+        />
         {showAddSheet && (
           <AddActionSheet
             familyId={familyId}
@@ -622,8 +675,8 @@ export default function Dashboard({ familyId }) {
           </p>
           {unallocated !== null && (
             <p className="hint">
-              {unallocated.toFixed(2)} {family.base_currency} not yet
-              allocated to any member's balance.
+              {unallocated.toFixed(2)} {family.base_currency} not yet allocated
+              to any member's balance.
             </p>
           )}
         </section>
@@ -653,8 +706,7 @@ export default function Dashboard({ familyId }) {
               />
             </div>
             <p className="hint">
-              This is a target the admin set, separate from actual cash
-              above.
+              This is a target the admin set, separate from actual cash above.
             </p>
           </section>
         )}
@@ -664,6 +716,7 @@ export default function Dashboard({ familyId }) {
           memberId={myMember?.id}
           baseCurrency={family.base_currency}
           cards={cards}
+          members={members}
           amAdmin={amAdmin}
           onChanged={() => {
             loadCards();
@@ -695,6 +748,7 @@ export default function Dashboard({ familyId }) {
                 familyId={familyId}
                 baseCurrency={family.base_currency}
                 categories={categories}
+                members={members}
                 canManage={t.member_id === myMember?.id || amAdmin}
                 onChanged={() => {
                   loadTransactions();
@@ -719,7 +773,11 @@ export default function Dashboard({ familyId }) {
           />
         )}
 
-        <BottomNav active="family" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+        <BottomNav
+          active="family"
+          onChange={handleNavChange}
+          onAddClick={() => setShowAddSheet(true)}
+        />
         {showAddSheet && myMember && (
           <AddActionSheet
             familyId={familyId}
@@ -788,8 +846,7 @@ export default function Dashboard({ familyId }) {
               {family.base_currency}
             </p>
             <p className="hint">
-              How much you've drawn from the family budget so far this
-              period.
+              How much you've drawn from the family budget so far this period.
             </p>
           </section>
         )}
@@ -798,7 +855,11 @@ export default function Dashboard({ familyId }) {
           Sign Out
         </button>
 
-        <BottomNav active="me" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+        <BottomNav
+          active="me"
+          onChange={handleNavChange}
+          onAddClick={() => setShowAddSheet(true)}
+        />
         {showAddSheet && myMember && (
           <AddActionSheet
             familyId={familyId}
@@ -899,6 +960,7 @@ export default function Dashboard({ familyId }) {
               familyId={familyId}
               baseCurrency={family.base_currency}
               categories={categories}
+              members={members}
               canManage={t.member_id === myMember?.id || amAdmin}
               onChanged={() => {
                 loadTransactions();
@@ -999,7 +1061,11 @@ export default function Dashboard({ familyId }) {
         </section>
       )}
 
-      <BottomNav active="dashboard" onChange={handleNavChange} onAddClick={() => setShowAddSheet(true)} />
+      <BottomNav
+        active="dashboard"
+        onChange={handleNavChange}
+        onAddClick={() => setShowAddSheet(true)}
+      />
       {showAddSheet && myMember && (
         <AddActionSheet
           familyId={familyId}
@@ -1023,6 +1089,7 @@ export default function Dashboard({ familyId }) {
           viewerId={myMember.id}
           baseCurrency={family.base_currency}
           categories={categories}
+          members={members}
           amAdmin={amAdmin}
           onClose={() => setShowMyHistoryModal(false)}
         />

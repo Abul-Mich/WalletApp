@@ -1,38 +1,46 @@
-import { useState } from 'react'
-import { supabase } from '../supabaseClient'
-import CardDetailModal from './CardDetailModal'
+import { useState } from "react";
+import { supabase } from "../supabaseClient";
+import CardDetailModal from "./CardDetailModal";
 
-export default function CardsSection({ familyId, memberId, baseCurrency, cards, amAdmin, onChanged }) {
-  const [selectedCardId, setSelectedCardId] = useState(null)
-  const selectedCard = cards.find((c) => c.id === selectedCardId) || null
-  const [showNewCard, setShowNewCard] = useState(false)
-  const [showArchived, setShowArchived] = useState(false)
-  const [name, setName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
+export default function CardsSection({
+  familyId,
+  memberId,
+  baseCurrency,
+  cards,
+  members,
+  amAdmin,
+  onChanged,
+}) {
+  const [selectedCardId, setSelectedCardId] = useState(null);
+  const selectedCard = cards.find((c) => c.id === selectedCardId) || null;
+  const [showNewCard, setShowNewCard] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
 
-  const activeCards = cards.filter((c) => !c.archived)
-  const archivedCards = cards.filter((c) => c.archived)
-  const visibleCards = showArchived ? cards : activeCards
+  const activeCards = cards.filter((c) => !c.archived);
+  const archivedCards = cards.filter((c) => c.archived);
+  const visibleCards = showArchived ? cards : activeCards;
 
   async function handleCreate(e) {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
     try {
-      const { error: err } = await supabase.from('cards').insert({
+      const { error: err } = await supabase.from("cards").insert({
         family_id: familyId,
         name: name.trim(),
-        created_by: memberId
-      })
-      if (err) throw err
-      setName('')
-      setShowNewCard(false)
-      onChanged?.()
+        created_by: memberId,
+      });
+      if (err) throw err;
+      setName("");
+      setShowNewCard(false);
+      onChanged?.();
     } catch (err) {
-      setError(err.message)
+      setError(err.message);
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
   }
 
@@ -46,7 +54,7 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
             className="link-button"
             onClick={() => setShowNewCard((v) => !v)}
           >
-            {showNewCard ? 'Cancel' : 'New Card'}
+            {showNewCard ? "Cancel" : "New Card"}
           </button>
         )}
       </div>
@@ -60,7 +68,7 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
             required
           />
           <button type="submit" disabled={busy}>
-            {busy ? 'Creating...' : 'Create Card'}
+            {busy ? "Creating..." : "Create Card"}
           </button>
           {error && <p className="status error">{error}</p>}
         </form>
@@ -75,7 +83,7 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
           <li key={c.id}>
             <button
               type="button"
-              className={`card-list-item ${c.archived ? 'archived' : ''}`}
+              className={`card-list-item ${c.archived ? "archived" : ""}`}
               onClick={() => setSelectedCardId(c.id)}
             >
               <span>
@@ -96,7 +104,9 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
           className="link-button"
           onClick={() => setShowArchived((v) => !v)}
         >
-          {showArchived ? 'Hide archived cards' : `Show ${archivedCards.length} archived card${archivedCards.length > 1 ? 's' : ''}`}
+          {showArchived
+            ? "Hide archived cards"
+            : `Show ${archivedCards.length} archived card${archivedCards.length > 1 ? "s" : ""}`}
         </button>
       )}
 
@@ -106,11 +116,12 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
           memberId={memberId}
           card={selectedCard}
           baseCurrency={baseCurrency}
+          members={members}
           amAdmin={amAdmin}
           onClose={() => setSelectedCardId(null)}
           onChanged={onChanged}
         />
       )}
     </section>
-  )
+  );
 }
