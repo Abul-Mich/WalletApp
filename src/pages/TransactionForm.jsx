@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getExchangeRate, SUPPORTED_CURRENCIES } from '../lib/exchangeRates'
 
-export default function TransactionForm({ familyId, memberId, baseCurrency, categories, onDone }) {
+export default function TransactionForm({ familyId, memberId, baseCurrency, categories, currentBalance, onDone }) {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(baseCurrency)
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '')
@@ -16,11 +16,22 @@ export default function TransactionForm({ familyId, memberId, baseCurrency, cate
     setError(null)
     try {
       const rate = await getExchangeRate(familyId, currency, baseCurrency)
+      const parsed = parseFloat(amount)
+      const baseAmount = parsed * rate
+
+      if (currentBalance != null && baseAmount > currentBalance) {
+        setError(
+          `This is more than your balance (${Number(currentBalance).toFixed(2)} ${baseCurrency}). ` +
+            `Add balance first, from the "Add Balance" tab.`
+        )
+        setBusy(false)
+        return
+      }
 
       const { error: err } = await supabase.from('transactions').insert({
         family_id: familyId,
         member_id: memberId,
-        amount: parseFloat(amount),
+        amount: parsed,
         currency,
         exchange_rate_to_base: rate,
         category_id: categoryId || null,
@@ -39,6 +50,11 @@ export default function TransactionForm({ familyId, memberId, baseCurrency, cate
 
   return (
     <form onSubmit={handleSubmit} className="inline-form">
+      {currentBalance != null && (
+        <p className="hint">
+          Your balance: {Number(currentBalance).toFixed(2)} {baseCurrency}
+        </p>
+      )}
       <input
         type="number"
         step="0.01"

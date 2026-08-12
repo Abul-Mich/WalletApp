@@ -1565,3 +1565,118 @@ button.link-btn:hover {
   text-transform: uppercase;
   letter-spacing: 0.07em;
 }
+
+/* Card archive/rename UI */
+.pill-archived {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+}
+
+.card-list-item.archived {
+  opacity: 0.6;
+}
+
+.card-admin-actions {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.sheet-title-input {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  color: var(--text);
+  margin-right: 8px;
+}
+
+/* Transaction history filter bar */
+.filter-toggle {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+}
+
+.filter-bar input,
+.filter-bar select {
+  width: 100%;
+}
+
+.filter-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-date-row input {
+  flex: 1;
+}
+
+.filter-date-sep {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* Me page profile card */
+.profile-field {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.profile-field:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.profile-field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.profile-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Danger Zone (Delete Family) */
+.danger-zone {
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.danger-zone .subsection {
+  color: #ef4444;
+}
+
+.hint.warning {
+  color: #f59e0b;
+  font-weight: 600;
+}

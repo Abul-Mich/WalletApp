@@ -1,33 +1,47 @@
-import { useState } from 'react'
-import { supabase } from '../supabaseClient'
-import CardDetailModal from './CardDetailModal'
+import { useState } from "react";
+import { supabase } from "../supabaseClient";
+import CardDetailModal from "./CardDetailModal";
 
-export default function CardsSection({ familyId, memberId, baseCurrency, cards, amAdmin, onChanged }) {
-  const [selectedCardId, setSelectedCardId] = useState(null)
-  const selectedCard = cards.find((c) => c.id === selectedCardId) || null
-  const [showNewCard, setShowNewCard] = useState(false)
-  const [name, setName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
+export default function CardsSection({
+  familyId,
+  memberId,
+  baseCurrency,
+  cards,
+  members,
+  amAdmin,
+  amSuperadmin,
+  onChanged,
+}) {
+  const [selectedCardId, setSelectedCardId] = useState(null);
+  const selectedCard = cards.find((c) => c.id === selectedCardId) || null;
+  const [showNewCard, setShowNewCard] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const activeCards = cards.filter((c) => !c.archived);
+  const archivedCards = cards.filter((c) => c.archived);
+  const visibleCards = showArchived ? cards : activeCards;
 
   async function handleCreate(e) {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
     try {
-      const { error: err } = await supabase.from('cards').insert({
+      const { error: err } = await supabase.from("cards").insert({
         family_id: familyId,
         name: name.trim(),
-        created_by: memberId
-      })
-      if (err) throw err
-      setName('')
-      setShowNewCard(false)
-      onChanged?.()
+        created_by: memberId,
+      });
+      if (err) throw err;
+      setName("");
+      setShowNewCard(false);
+      onChanged?.();
     } catch (err) {
-      setError(err.message)
+      setError(err.message);
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
   }
 
@@ -41,7 +55,7 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
             className="link-button"
             onClick={() => setShowNewCard((v) => !v)}
           >
-            {showNewCard ? 'Cancel' : 'New Card'}
+            {showNewCard ? "Cancel" : "New Card"}
           </button>
         )}
       </div>
@@ -55,21 +69,28 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
             required
           />
           <button type="submit" disabled={busy}>
-            {busy ? 'Creating...' : 'Create Card'}
+            {busy ? "Creating..." : "Create Card"}
           </button>
           {error && <p className="status error">{error}</p>}
         </form>
       )}
 
-      {cards.length === 0 && !showNewCard && (
+      {activeCards.length === 0 && !showNewCard && (
         <p className="hint">No shared cards yet.</p>
       )}
 
       <ul className="card-list">
-        {cards.map((c) => (
+        {visibleCards.map((c) => (
           <li key={c.id}>
-            <button type="button" className="card-list-item" onClick={() => setSelectedCardId(c.id)}>
-              <span>{c.name}</span>
+            <button
+              type="button"
+              className={`card-list-item ${c.archived ? "archived" : ""}`}
+              onClick={() => setSelectedCardId(c.id)}
+            >
+              <span>
+                {c.name}
+                {c.archived && <span className="pill-archived">Archived</span>}
+              </span>
               <span className="balance-inline">
                 {Number(c.balance_cache).toFixed(2)} {baseCurrency}
               </span>
@@ -78,16 +99,31 @@ export default function CardsSection({ familyId, memberId, baseCurrency, cards, 
         ))}
       </ul>
 
+      {archivedCards.length > 0 && (
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => setShowArchived((v) => !v)}
+        >
+          {showArchived
+            ? "Hide archived cards"
+            : `Show ${archivedCards.length} archived card${archivedCards.length > 1 ? "s" : ""}`}
+        </button>
+      )}
+
       {selectedCard && (
         <CardDetailModal
           familyId={familyId}
           memberId={memberId}
           card={selectedCard}
           baseCurrency={baseCurrency}
+          members={members}
+          amAdmin={amAdmin}
+          amSuperadmin={amSuperadmin}
           onClose={() => setSelectedCardId(null)}
           onChanged={onChanged}
         />
       )}
     </section>
-  )
+  );
 }

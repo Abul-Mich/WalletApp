@@ -1,53 +1,178 @@
-import { useEffect, useState } from 'react'
-import { supabase } from '../supabaseClient'
-import CardTopUpForm from './CardTopUpForm'
-import CardWithdrawForm from './CardWithdrawForm'
+import { useEffect, useState } from "react";
+import { supabase } from "../supabaseClient";
+import { getExchangeRate, SUPPORTED_CURRENCIES } from "../lib/exchangeRates";
+import CardTopUpForm from "./CardTopUpForm";
+import CardWithdrawForm from "./CardWithdrawForm";
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 20;
 
-export default function CardDetailModal({ familyId, memberId, card, baseCurrency, onClose, onChanged }) {
-  const [tab, setTab] = useState('topup')
-  const [history, setHistory] = useState([])
-  const [limit, setLimit] = useState(PAGE_SIZE)
-  const [hasMore, setHasMore] = useState(false)
-  const [loading, setLoading] = useState(true)
+export default function CardDetailModal({
+  familyId,
+  memberId,
+  card,
+  baseCurrency,
+  members,
+  amAdmin,
+  amSuperadmin,
+  onClose,
+  onChanged,
+}) {
+  const [tab, setTab] = useState(card.archived ? "history" : "topup");
+  const [history, setHistory] = useState([]);
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const [renaming, setRenaming] = useState(false);
+  const [nameInput, setNameInput] = useState(card.name);
+  const [savingCard, setSavingCard] = useState(false);
+  const [cardError, setCardError] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editCurrency, setEditCurrency] = useState(baseCurrency);
+  const [editNote, setEditNote] = useState("");
+  const [savingEntry, setSavingEntry] = useState(false);
+
+  function canManageHistoryEntry(entry) {
+    return Boolean(entry && (entry.member_id === memberId || amSuperadmin));
+  }
+
+  function startEditing(entry) {
+    setEditingId(`${entry.kind}-${entry.id}`);
+    setEditAmount(String(entry.amount));
+    setEditCurrency(entry.currency || baseCurrency);
+    setEditNote(entry.note || "");
+  }
+
+  async function saveHistoryEntry(entry) {
+    setSavingEntry(true);
+    try {
+      const rate = await getExchangeRate(familyId, editCurrency, baseCurrency);
+      const table = entry.kind === "topup" ? "card_transfers" : "card_transactions";
+      const payload = entry.kind === "topup"
+        ? {
+            amount: Number(editAmount),
+            currency: editCurrency,
+            exchange_rate_to_base: rate,
+          }
+        : {
+            amount: Number(editAmount),
+            currency: editCurrency,
+            exchange_rate_to_base: rate,
+            note: editNote || null,
+          };
+
+      const { error } = await supabase.from(table).update(payload).eq("id", entry.id);
+      if (error) throw error;
+      setEditingId(null);
+      handleDone();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingEntry(false);
+    }
+  }
 
   async function loadHistory(nextLimit) {
-    setLoading(true)
+    setLoading(true);
     const [{ data: transfers }, { data: withdrawals }] = await Promise.all([
       supabase
-        .from('card_transfers')
-        .select('*, members(display_name)')
-        .eq('card_id', card.id)
-        .order('created_at', { ascending: false })
+        .from("card_transfers")
+        .select("*")
+        .eq("card_id", card.id)
+        .order("created_at", { ascending: false })
         .limit(nextLimit),
       supabase
-        .from('card_transactions')
-        .select('*, members(display_name)')
-        .eq('card_id', card.id)
-        .order('created_at', { ascending: false })
-        .limit(nextLimit)
-    ])
+        .from("card_transactions")
+        .select("*")
+        .eq("card_id", card.id)
+        .order("created_at", { ascending: false })
+        .limit(nextLimit),
+    ]);
 
     const combined = [
-      ...(transfers || []).map((r) => ({ ...r, kind: 'topup' })),
-      ...(withdrawals || []).map((r) => ({ ...r, kind: 'withdraw' }))
-    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      ...(transfers || []).map((r) => ({ ...r, kind: "topup" })),
+      ...(withdrawals || []).map((r) => ({ ...r, kind: "withdraw" })),
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    setHistory(combined.slice(0, nextLimit))
-    setHasMore((transfers?.length === nextLimit) || (withdrawals?.length === nextLimit))
-    setLoading(false)
+    setHistory(combined.slice(0, nextLimit));
+    setHasMore(
+      transfers?.length === nextLimit || withdrawals?.length === nextLimit,
+    );
+    setLoading(false);
   }
 
   useEffect(() => {
-    loadHistory(limit)
+    loadHistory(limit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card.id, limit])
+  }, [card.id, limit]);
 
   function handleDone() {
-    onChanged?.()
-    setLimit(PAGE_SIZE)
-    loadHistory(PAGE_SIZE)
+    onChanged?.();
+    setLimit(PAGE_SIZE);
+    loadHistory(PAGE_SIZE);
+  }
+
+  async function deleteHistoryEntry(entry) {
+    if (!confirm("Delete this entry? The card balance will be recalculated."))
+      return;
+    const table =
+      entry.kind === "topup" ? "card_transfers" : "card_transactions";
+    const { error } = await supabase.from(table).delete().eq("id", entry.id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    handleDone();
+  }
+
+  async function saveRename() {
+    const trimmed = nameInput.trim();
+    if (!trimmed || trimmed === card.name) {
+      setRenaming(false);
+      return;
+    }
+    setSavingCard(true);
+    setCardError(null);
+    try {
+      const { error: err } = await supabase
+        .from("cards")
+        .update({ name: trimmed })
+        .eq("id", card.id);
+      if (err) throw err;
+      setRenaming(false);
+      onChanged?.();
+    } catch (err) {
+      setCardError(err.message);
+    } finally {
+      setSavingCard(false);
+    }
+  }
+
+  async function toggleArchived() {
+    const next = !card.archived;
+    if (
+      next &&
+      !confirm(
+        `Archive "${card.name}"? No more top-ups or withdrawals will be allowed, but its balance and history stay visible.`,
+      )
+    ) {
+      return;
+    }
+    setSavingCard(true);
+    setCardError(null);
+    try {
+      const { error: err } = await supabase
+        .from("cards")
+        .update({ archived: next })
+        .eq("id", card.id);
+      if (err) throw err;
+      onChanged?.();
+      onClose?.();
+    } catch (err) {
+      setCardError(err.message);
+      setSavingCard(false);
+    }
   }
 
   return (
@@ -55,10 +180,35 @@ export default function CardDetailModal({ familyId, memberId, card, baseCurrency
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-handle" />
         <div className="sheet-header">
-          <h2>{card.name}</h2>
-          <button type="button" className="sheet-close" aria-label="Close" onClick={onClose}>
+          {renaming ? (
+            <input
+              className="sheet-title-input"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onBlur={saveRename}
+              onKeyDown={(e) => e.key === "Enter" && saveRename()}
+              autoFocus
+              disabled={savingCard}
+            />
+          ) : (
+            <h2>
+              {card.name}
+              {card.archived && <span className="pill-archived">Archived</span>}
+            </h2>
+          )}
+          <button
+            type="button"
+            className="sheet-close"
+            aria-label="Close"
+            onClick={onClose}
+          >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <path
+                d="M6 6l12 12M18 6L6 18"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
         </div>
@@ -67,25 +217,65 @@ export default function CardDetailModal({ familyId, memberId, card, baseCurrency
           {Number(card.balance_cache).toFixed(2)} {baseCurrency}
         </p>
 
+        {amAdmin && (
+          <div className="card-admin-actions">
+            {!renaming && (
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setRenaming(true)}
+              >
+                Rename
+              </button>
+            )}
+            <button
+              type="button"
+              className="link-button"
+              disabled={savingCard}
+              onClick={toggleArchived}
+            >
+              {card.archived ? "Unarchive" : "Archive"}
+            </button>
+          </div>
+        )}
+        {cardError && <p className="status error">{cardError}</p>}
+
         <div className="sheet-tabs">
+          {!card.archived && (
+            <>
+              <button
+                type="button"
+                className={`sheet-tab ${tab === "topup" ? "active" : ""}`}
+                onClick={() => setTab("topup")}
+              >
+                Top Up
+              </button>
+              <button
+                type="button"
+                className={`sheet-tab ${tab === "withdraw" ? "active" : ""}`}
+                onClick={() => setTab("withdraw")}
+              >
+                Withdraw
+              </button>
+            </>
+          )}
           <button
             type="button"
-            className={`sheet-tab ${tab === 'topup' ? 'active' : ''}`}
-            onClick={() => setTab('topup')}
+            className={`sheet-tab ${tab === "history" ? "active" : ""}`}
+            onClick={() => setTab("history")}
           >
-            Top Up
-          </button>
-          <button
-            type="button"
-            className={`sheet-tab ${tab === 'withdraw' ? 'active' : ''}`}
-            onClick={() => setTab('withdraw')}
-          >
-            Withdraw
+            History
           </button>
         </div>
 
         <div className="sheet-body">
-          {tab === 'topup' && (
+          {card.archived && tab !== "history" && (
+            <p className="hint">
+              This card is archived. Unarchive it to top up or withdraw again.
+            </p>
+          )}
+
+          {!card.archived && tab === "topup" && (
             <CardTopUpForm
               familyId={familyId}
               memberId={memberId}
@@ -94,7 +284,7 @@ export default function CardDetailModal({ familyId, memberId, card, baseCurrency
               onDone={handleDone}
             />
           )}
-          {tab === 'withdraw' && (
+          {!card.archived && tab === "withdraw" && (
             <CardWithdrawForm
               familyId={familyId}
               memberId={memberId}
@@ -105,43 +295,124 @@ export default function CardDetailModal({ familyId, memberId, card, baseCurrency
             />
           )}
 
-          <h3 className="sheet-subheading">History</h3>
-          {loading && <p className="hint">Loading...</p>}
-          {!loading && history.length === 0 && <p className="hint">No activity yet.</p>}
-          <ul className="txn-list">
-            {history.map((r) => (
-              <li key={`${r.kind}-${r.id}`}>
-                <div>
-                  <span className="txn-amount">
-                    {r.kind === 'topup' ? '+' : '-'}
-                    {Number(r.amount).toFixed(2)} {r.currency}
-                    {r.currency !== baseCurrency && (
-                      <span className="txn-converted">
-                        {' '}
-                        (≈{(r.amount * r.exchange_rate_to_base).toFixed(2)} {baseCurrency})
-                      </span>
-                    )}
-                  </span>
-                  <span className="txn-meta">
-                    {r.kind === 'topup' ? 'Top up' : 'Withdraw'} · {r.members?.display_name}
-                  </span>
-                </div>
-                {r.note && <p className="txn-note">{r.note}</p>}
-              </li>
-            ))}
-          </ul>
-          {hasMore && (
-            <button
-              type="button"
-              className="load-more"
-              disabled={loading}
-              onClick={() => setLimit((l) => l + PAGE_SIZE)}
-            >
-              {loading ? 'Loading...' : 'Load 20 More'}
-            </button>
+          {tab === "history" && (
+            <>
+              {loading && <p className="hint">Loading...</p>}
+              {!loading && history.length === 0 && (
+                <p className="hint">No activity yet.</p>
+              )}
+              <ul className="txn-list">
+                {history.map((r) => {
+                  const rowKey = `${r.kind}-${r.id}`;
+                  const canManage = canManageHistoryEntry(r);
+                  const editing = editingId === rowKey;
+
+                  return (
+                    <li key={rowKey}>
+                      {editing ? (
+                        <div className="txn-edit">
+                          <div className="inline-form">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={editAmount}
+                              onChange={(e) => setEditAmount(e.target.value)}
+                            />
+                            <select
+                              value={editCurrency}
+                              onChange={(e) => setEditCurrency(e.target.value)}
+                            >
+                              {SUPPORTED_CURRENCIES.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                            {r.kind === "withdraw" && (
+                              <input
+                                placeholder="Note"
+                                value={editNote}
+                                onChange={(e) => setEditNote(e.target.value)}
+                              />
+                            )}
+                            <button
+                              type="button"
+                              disabled={savingEntry}
+                              onClick={() => saveHistoryEntry(r)}
+                            >
+                              {savingEntry ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              className="remove-btn"
+                              disabled={savingEntry}
+                              onClick={() => setEditingId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <span className="txn-amount">
+                              {r.kind === "topup" ? "+" : "-"}
+                              {Number(r.amount).toFixed(2)} {r.currency}
+                              {r.currency !== baseCurrency && (
+                                <span className="txn-converted">
+                                  {" "}
+                                  (≈{(r.amount * r.exchange_rate_to_base).toFixed(
+                                    2,
+                                  )}{" "}
+                                  {baseCurrency})
+                                </span>
+                              )}
+                            </span>
+                            <span className="txn-meta">
+                              {r.kind === "topup" ? "Top up" : "Withdraw"} ·{" "}
+                              {members?.find((m) => m.id === r.member_id)
+                                ?.display_name ?? "Unknown member"}
+                            </span>
+                          </div>
+                          {r.note && <p className="txn-note">{r.note}</p>}
+                          {canManage && (
+                            <div className="txn-actions">
+                              <button
+                                type="button"
+                                onClick={() => startEditing(r)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="remove-btn"
+                                onClick={() => deleteHistoryEntry(r)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {hasMore && (
+                <button
+                  type="button"
+                  className="load-more"
+                  disabled={loading}
+                  onClick={() => setLimit((l) => l + PAGE_SIZE)}
+                >
+                  {loading ? "Loading..." : "Load 20 More"}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
     </div>
-  )
+  );
 }
