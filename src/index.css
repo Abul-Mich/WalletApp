@@ -1675,3 +1675,8 @@ button.link-btn:hover {
 .danger-zone .subsection {
   color: #ef4444;
 }
+
+.hint.warning {
+  color: #f59e0b;
+  font-weight: 600;
+}

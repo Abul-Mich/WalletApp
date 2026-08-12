@@ -9,6 +9,7 @@ export default function CardsSection({
   cards,
   members,
   amAdmin,
+  amSuperadmin,
   onChanged,
 }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -118,6 +119,7 @@ export default function CardsSection({
           baseCurrency={baseCurrency}
           members={members}
           amAdmin={amAdmin}
+          amSuperadmin={amSuperadmin}
           onClose={() => setSelectedCardId(null)}
           onChanged={onChanged}
         />

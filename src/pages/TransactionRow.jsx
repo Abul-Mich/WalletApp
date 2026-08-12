@@ -28,20 +28,32 @@ export default function TransactionRow({
     members?.find((m) => m.id === t.member_id)?.display_name ??
     "Unknown member";
 
+  const isCard = t.kind === "card";
+
   async function save() {
     setBusy(true);
     setError(null);
     try {
       const rate = await getExchangeRate(familyId, currency, baseCurrency);
+      const table = isCard ? "card_transactions" : "transactions";
+      const payload = isCard
+        ? {
+            amount: parseFloat(amount),
+            currency,
+            exchange_rate_to_base: rate,
+            note: note || null,
+          }
+        : {
+            amount: parseFloat(amount),
+            currency,
+            exchange_rate_to_base: rate,
+            category_id: categoryId || null,
+            note: note || null,
+          };
+
       const { error: err } = await supabase
-        .from("transactions")
-        .update({
-          amount: parseFloat(amount),
-          currency,
-          exchange_rate_to_base: rate,
-          category_id: categoryId || null,
-          note: note || null,
-        })
+        .from(table)
+        .update(payload)
         .eq("id", t.id);
       if (err) throw err;
       setEditing(false);
@@ -54,15 +66,13 @@ export default function TransactionRow({
   }
 
   async function remove() {
-    if (t.kind === "card") return;
-    if (!confirm(`Delete this ${t.amount} ${t.currency} transaction?`)) return;
+    const table = isCard ? "card_transactions" : "transactions";
+    const label = isCard ? "card withdrawal" : "transaction";
+    if (!confirm(`Delete this ${label}?`)) return;
     setBusy(true);
     setError(null);
     try {
-      const { error: err } = await supabase
-        .from("transactions")
-        .delete()
-        .eq("id", t.id);
+      const { error: err } = await supabase.from(table).delete().eq("id", t.id);
       if (err) throw err;
       onChanged?.();
     } catch (err) {
@@ -71,7 +81,7 @@ export default function TransactionRow({
     }
   }
 
-  if (t.kind === "card" && !editing) {
+  if (isCard && !editing) {
     return (
       <li>
         <div>
@@ -90,6 +100,21 @@ export default function TransactionRow({
           </span>
         </div>
         {t.note && <p className="txn-note">{t.note}</p>}
+        {canManage && (
+          <div className="txn-actions">
+            <button type="button" onClick={() => setEditing(true)}>
+              Edit
+            </button>
+            <button
+              type="button"
+              className="remove-btn"
+              disabled={busy}
+              onClick={remove}
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </li>
     );
   }
@@ -115,16 +140,18 @@ export default function TransactionRow({
               </option>
             ))}
           </select>
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-          >
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          {!isCard && (
+            <select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             placeholder="Note"
             value={note}
@@ -165,7 +192,7 @@ export default function TransactionRow({
         </span>
       </div>
       {t.note && <p className="txn-note">{t.note}</p>}
-      {canManage && t.kind !== "card" && (
+      {canManage && (
         <div className="txn-actions">
           <button type="button" onClick={() => setEditing(true)}>
             Edit

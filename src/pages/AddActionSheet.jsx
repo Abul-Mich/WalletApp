@@ -58,6 +58,7 @@ export default function AddActionSheet({
               memberId={memberId}
               baseCurrency={baseCurrency}
               categories={categories}
+              currentBalance={currentBalance}
               onDone={handleDone}
             />
           )}

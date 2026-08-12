@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { getExchangeRate, SUPPORTED_CURRENCIES } from "../lib/exchangeRates";
 import CardTopUpForm from "./CardTopUpForm";
 import CardWithdrawForm from "./CardWithdrawForm";
 
@@ -12,6 +13,7 @@ export default function CardDetailModal({
   baseCurrency,
   members,
   amAdmin,
+  amSuperadmin,
   onClose,
   onChanged,
 }) {
@@ -25,6 +27,51 @@ export default function CardDetailModal({
   const [nameInput, setNameInput] = useState(card.name);
   const [savingCard, setSavingCard] = useState(false);
   const [cardError, setCardError] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editCurrency, setEditCurrency] = useState(baseCurrency);
+  const [editNote, setEditNote] = useState("");
+  const [savingEntry, setSavingEntry] = useState(false);
+
+  function canManageHistoryEntry(entry) {
+    return Boolean(entry && (entry.member_id === memberId || amSuperadmin));
+  }
+
+  function startEditing(entry) {
+    setEditingId(`${entry.kind}-${entry.id}`);
+    setEditAmount(String(entry.amount));
+    setEditCurrency(entry.currency || baseCurrency);
+    setEditNote(entry.note || "");
+  }
+
+  async function saveHistoryEntry(entry) {
+    setSavingEntry(true);
+    try {
+      const rate = await getExchangeRate(familyId, editCurrency, baseCurrency);
+      const table = entry.kind === "topup" ? "card_transfers" : "card_transactions";
+      const payload = entry.kind === "topup"
+        ? {
+            amount: Number(editAmount),
+            currency: editCurrency,
+            exchange_rate_to_base: rate,
+          }
+        : {
+            amount: Number(editAmount),
+            currency: editCurrency,
+            exchange_rate_to_base: rate,
+            note: editNote || null,
+          };
+
+      const { error } = await supabase.from(table).update(payload).eq("id", entry.id);
+      if (error) throw error;
+      setEditingId(null);
+      handleDone();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingEntry(false);
+    }
+  }
 
   async function loadHistory(nextLimit) {
     setLoading(true);
@@ -255,42 +302,102 @@ export default function CardDetailModal({
                 <p className="hint">No activity yet.</p>
               )}
               <ul className="txn-list">
-                {history.map((r) => (
-                  <li key={`${r.kind}-${r.id}`}>
-                    <div>
-                      <span className="txn-amount">
-                        {r.kind === "topup" ? "+" : "-"}
-                        {Number(r.amount).toFixed(2)} {r.currency}
-                        {r.currency !== baseCurrency && (
-                          <span className="txn-converted">
-                            {" "}
-                            (≈{(r.amount * r.exchange_rate_to_base).toFixed(
-                              2,
-                            )}{" "}
-                            {baseCurrency})
-                          </span>
-                        )}
-                      </span>
-                      <span className="txn-meta">
-                        {r.kind === "topup" ? "Top up" : "Withdraw"} ·{" "}
-                        {members?.find((m) => m.id === r.member_id)
-                          ?.display_name ?? "Unknown member"}
-                      </span>
-                    </div>
-                    {r.note && <p className="txn-note">{r.note}</p>}
-                    {amAdmin && (
-                      <div className="txn-actions">
-                        <button
-                          type="button"
-                          className="remove-btn"
-                          onClick={() => deleteHistoryEntry(r)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </li>
-                ))}
+                {history.map((r) => {
+                  const rowKey = `${r.kind}-${r.id}`;
+                  const canManage = canManageHistoryEntry(r);
+                  const editing = editingId === rowKey;
+
+                  return (
+                    <li key={rowKey}>
+                      {editing ? (
+                        <div className="txn-edit">
+                          <div className="inline-form">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={editAmount}
+                              onChange={(e) => setEditAmount(e.target.value)}
+                            />
+                            <select
+                              value={editCurrency}
+                              onChange={(e) => setEditCurrency(e.target.value)}
+                            >
+                              {SUPPORTED_CURRENCIES.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                            {r.kind === "withdraw" && (
+                              <input
+                                placeholder="Note"
+                                value={editNote}
+                                onChange={(e) => setEditNote(e.target.value)}
+                              />
+                            )}
+                            <button
+                              type="button"
+                              disabled={savingEntry}
+                              onClick={() => saveHistoryEntry(r)}
+                            >
+                              {savingEntry ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              className="remove-btn"
+                              disabled={savingEntry}
+                              onClick={() => setEditingId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <span className="txn-amount">
+                              {r.kind === "topup" ? "+" : "-"}
+                              {Number(r.amount).toFixed(2)} {r.currency}
+                              {r.currency !== baseCurrency && (
+                                <span className="txn-converted">
+                                  {" "}
+                                  (≈{(r.amount * r.exchange_rate_to_base).toFixed(
+                                    2,
+                                  )}{" "}
+                                  {baseCurrency})
+                                </span>
+                              )}
+                            </span>
+                            <span className="txn-meta">
+                              {r.kind === "topup" ? "Top up" : "Withdraw"} ·{" "}
+                              {members?.find((m) => m.id === r.member_id)
+                                ?.display_name ?? "Unknown member"}
+                            </span>
+                          </div>
+                          {r.note && <p className="txn-note">{r.note}</p>}
+                          {canManage && (
+                            <div className="txn-actions">
+                              <button
+                                type="button"
+                                onClick={() => startEditing(r)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="remove-btn"
+                                onClick={() => deleteHistoryEntry(r)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
               {hasMore && (
                 <button

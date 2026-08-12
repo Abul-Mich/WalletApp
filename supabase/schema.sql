@@ -64,6 +64,21 @@ create table if not exists wallets (
   updated_at timestamptz not null default now()
 );
 
+-- Lets a superadmin directly correct the family balance (e.g. reconciling
+-- against a real bank/cash count) without it being framed as a deposit or
+-- an expense. Stored as a signed delta rather than overwriting
+-- balance_cache directly, so it folds into the same "recompute from
+-- scratch" pattern as deposits/transactions below — the form itself
+-- computes (target balance - current balance) and inserts that.
+create table if not exists wallet_balance_adjustments (
+  id uuid primary key default uuid_generate_v4(),
+  family_id uuid not null references families(id) on delete cascade,
+  set_by_member_id uuid not null references members(id) on delete cascade,
+  amount numeric not null check (amount <> 0),
+  note text,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists categories (
   id uuid primary key default uuid_generate_v4(),
   family_id uuid not null references families(id) on delete cascade,
@@ -299,6 +314,25 @@ drop policy if exists "wallets_all_admin" on wallets;
 create policy "wallets_all_admin" on wallets
   for all using (is_admin(family_id));
 
+-- wallet_balance_adjustments: readable by family; only the superadmin can
+-- write (direct balance edits are a bigger deal than a normal deposit, so
+-- this is intentionally a tier above regular admin).
+drop policy if exists "wallet_adjustments_select" on wallet_balance_adjustments;
+create policy "wallet_adjustments_select" on wallet_balance_adjustments
+  for select using (family_id in (select my_family_ids()));
+
+drop policy if exists "wallet_adjustments_insert_superadmin" on wallet_balance_adjustments;
+create policy "wallet_adjustments_insert_superadmin" on wallet_balance_adjustments
+  for insert with check (is_superadmin(family_id));
+
+drop policy if exists "wallet_adjustments_update_superadmin" on wallet_balance_adjustments;
+create policy "wallet_adjustments_update_superadmin" on wallet_balance_adjustments
+  for update using (is_superadmin(family_id));
+
+drop policy if exists "wallet_adjustments_delete_superadmin" on wallet_balance_adjustments;
+create policy "wallet_adjustments_delete_superadmin" on wallet_balance_adjustments
+  for delete using (is_superadmin(family_id));
+
 -- categories: readable by family; writable by admins only
 drop policy if exists "categories_select" on categories;
 create policy "categories_select" on categories
@@ -324,6 +358,14 @@ create policy "deposits_select" on deposits
 drop policy if exists "deposits_admin_insert" on deposits;
 create policy "deposits_admin_insert" on deposits
   for insert with check (is_admin(family_id));
+
+drop policy if exists "deposits_admin_update" on deposits;
+create policy "deposits_admin_update" on deposits
+  for update using (is_admin(family_id));
+
+drop policy if exists "deposits_admin_delete" on deposits;
+create policy "deposits_admin_delete" on deposits
+  for delete using (is_admin(family_id));
 
 -- transactions: readable by family; any member can insert their own;
 -- a member can edit/delete their own, admins can edit/delete anyone's (FR — full CRUD)
@@ -449,6 +491,7 @@ declare
   fam_id uuid;
   total_deposits numeric;
   total_spent numeric;
+  total_adjustments numeric;
 begin
   fam_id := coalesce(new.family_id, old.family_id);
 
@@ -458,8 +501,11 @@ begin
   select coalesce(sum(amount * exchange_rate_to_base), 0) into total_spent
   from transactions where family_id = fam_id;
 
+  select coalesce(sum(amount), 0) into total_adjustments
+  from wallet_balance_adjustments where family_id = fam_id;
+
   update wallets
-    set balance_cache = total_deposits - total_spent,
+    set balance_cache = total_deposits - total_spent + total_adjustments,
         updated_at = now()
     where family_id = fam_id;
 
@@ -476,6 +522,68 @@ drop trigger if exists trg_transactions_recalc on transactions;
 create trigger trg_transactions_recalc
   after insert or update or delete on transactions
   for each row execute function recalc_wallet_balance();
+
+drop trigger if exists trg_wallet_adjustments_recalc on wallet_balance_adjustments;
+create trigger trg_wallet_adjustments_recalc
+  after insert or update or delete on wallet_balance_adjustments
+  for each row execute function recalc_wallet_balance();
+
+-- Blocks a direct balance correction (insert/update/delete) that would
+-- leave the family balance below what's already allocated to members'
+-- own balances and shared cards — that would make some member's or card's
+-- balance a promise the family can't actually cover. Runs BEFORE, using the
+-- *projected* total (current adjustments total, plus/minus this change),
+-- since balance_cache itself hasn't been recomputed yet at this point.
+create or replace function check_wallet_adjustment_covers_allocations()
+returns trigger
+language plpgsql
+security definer
+as $$
+declare
+  fam_id uuid;
+  total_deposits numeric;
+  total_spent numeric;
+  current_adjustments numeric;
+  projected_adjustments numeric;
+  projected_balance numeric;
+  allocated_members numeric;
+  allocated_cards numeric;
+  allocated_total numeric;
+begin
+  fam_id := coalesce(new.family_id, old.family_id);
+
+  select coalesce(sum(amount * exchange_rate_to_base), 0) into total_deposits
+  from deposits where family_id = fam_id;
+  select coalesce(sum(amount * exchange_rate_to_base), 0) into total_spent
+  from transactions where family_id = fam_id;
+  select coalesce(sum(amount), 0) into current_adjustments
+  from wallet_balance_adjustments where family_id = fam_id;
+
+  projected_adjustments := case TG_OP
+    when 'INSERT' then current_adjustments + new.amount
+    when 'UPDATE' then current_adjustments - old.amount + new.amount
+    when 'DELETE' then current_adjustments - old.amount
+  end;
+
+  projected_balance := total_deposits - total_spent + projected_adjustments;
+
+  select coalesce(sum(balance), 0) into allocated_members from members where family_id = fam_id;
+  select coalesce(sum(balance_cache), 0) into allocated_cards from cards where family_id = fam_id;
+  allocated_total := allocated_members + allocated_cards;
+
+  if projected_balance < allocated_total then
+    raise exception 'This would leave the family balance (%) below what''s already allocated to members and cards (%)',
+      round(projected_balance, 2), round(allocated_total, 2);
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_wallet_adjustments_check on wallet_balance_adjustments;
+create trigger trg_wallet_adjustments_check
+  before insert or update or delete on wallet_balance_adjustments
+  for each row execute function check_wallet_adjustment_covers_allocations();
 
 -- 4b. Block privilege escalation on members.role. RLS policies can only see
 -- the NEW row on UPDATE ... WITH CHECK, not compare it against OLD, so this
@@ -790,13 +898,19 @@ create policy "card_transfers_insert_self" on card_transfers
     and member_id in (select id from members where user_id = auth.uid())
   );
 
-drop policy if exists "card_transfers_update_admin" on card_transfers;
-create policy "card_transfers_update_admin" on card_transfers
-  for update using (is_admin(family_id));
+drop policy if exists "card_transfers_update_own_or_superadmin" on card_transfers;
+create policy "card_transfers_update_own_or_superadmin" on card_transfers
+  for update using (
+    member_id in (select id from members where user_id = auth.uid())
+    or is_superadmin(family_id)
+  );
 
-drop policy if exists "card_transfers_delete_admin" on card_transfers;
-create policy "card_transfers_delete_admin" on card_transfers
-  for delete using (is_admin(family_id));
+drop policy if exists "card_transfers_delete_own_or_superadmin" on card_transfers;
+create policy "card_transfers_delete_own_or_superadmin" on card_transfers
+  for delete using (
+    member_id in (select id from members where user_id = auth.uid())
+    or is_superadmin(family_id)
+  );
 
 -- card_transactions (withdrawals/spend): readable by family; any member can
 -- insert as themselves.
@@ -811,13 +925,19 @@ create policy "card_transactions_insert_self" on card_transactions
     and member_id in (select id from members where user_id = auth.uid())
   );
 
-drop policy if exists "card_transactions_update_admin" on card_transactions;
-create policy "card_transactions_update_admin" on card_transactions
-  for update using (is_admin(family_id));
+drop policy if exists "card_transactions_update_own_or_superadmin" on card_transactions;
+create policy "card_transactions_update_own_or_superadmin" on card_transactions
+  for update using (
+    member_id in (select id from members where user_id = auth.uid())
+    or is_superadmin(family_id)
+  );
 
-drop policy if exists "card_transactions_delete_admin" on card_transactions;
-create policy "card_transactions_delete_admin" on card_transactions
-  for delete using (is_admin(family_id));
+drop policy if exists "card_transactions_delete_own_or_superadmin" on card_transactions;
+create policy "card_transactions_delete_own_or_superadmin" on card_transactions
+  for delete using (
+    member_id in (select id from members where user_id = auth.uid())
+    or is_superadmin(family_id)
+  );
 
 -- Recomputes a card's cached balance from scratch (all top-ups minus all
 -- withdrawals, in base currency) — same "recompute from scratch" pattern as
