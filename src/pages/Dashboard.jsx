@@ -17,6 +17,7 @@ import MeProfileCard from "./MeProfileCard";
 import BalanceTransfersAdmin from "./BalanceTransfersAdmin";
 import FamilyBalanceCard from "./FamilyBalanceCard";
 import FamilyBalanceHistoryAdmin from "./FamilyBalanceHistoryAdmin";
+import Statistics from "./Statistics";
 import { getMemberSpend } from "../lib/spendingLimits";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
@@ -145,7 +146,7 @@ export default function Dashboard({ familyId }) {
     if (key === "family") setView("family");
     else if (key === "dashboard") setView("home");
     else if (key === "me") setView("me");
-    // 'statistics' is still a placeholder — no view yet.
+    else if (key === "statistics") setView("statistics");
   }
   const [showMyHistory, setShowMyHistory] = useState(false);
 
@@ -841,6 +842,137 @@ export default function Dashboard({ familyId }) {
 
         <BottomNav
           active="family"
+          onChange={handleNavChange}
+          onAddClick={() => setShowAddSheet(true)}
+        />
+        {showAddSheet && myMember && (
+          <AddActionSheet
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            currentBalance={Number(myMember.balance || 0)}
+            onClose={() => setShowAddSheet(false)}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (view === "me") {
+    return (
+      <div className="dashboard">
+        <header>
+          <div>
+            <h1>Me</h1>
+            <p className="subtitle">{myMember?.display_name}</p>
+          </div>
+          <div className="header-actions">
+            <ProfileMenuButton
+              myMember={myMember}
+              myRole={myRole}
+              amAdmin={amAdmin}
+              showSettings={amAdmin}
+              onOpenSettings={() => setView("settings")}
+              onSignOut={() => supabase.auth.signOut()}
+            />
+          </div>
+        </header>
+
+        <MeProfileCard
+          myMember={myMember}
+          session={session}
+          family={family}
+          myRole={myRole}
+          onSaved={loadFamilyAndMembers}
+        />
+
+        <section className="card">
+          <h2>My Transactions</h2>
+          <p className="hint">
+            Your full expense history, with filters by category, date, or note.
+          </p>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setShowMyHistoryModal(true)}
+          >
+            View My Transaction History
+          </button>
+        </section>
+
+        <button className="signout" onClick={() => supabase.auth.signOut()}>
+          Sign Out
+        </button>
+
+        <BottomNav
+          active="me"
+          onChange={handleNavChange}
+          onAddClick={() => setShowAddSheet(true)}
+        />
+        {showAddSheet && myMember && (
+          <AddActionSheet
+            familyId={familyId}
+            memberId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            currentBalance={Number(myMember.balance || 0)}
+            onClose={() => setShowAddSheet(false)}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        )}
+
+        {showMyHistoryModal && myMember && (
+          <TransactionHistoryModal
+            familyId={familyId}
+            memberId={myMember.id}
+            viewerId={myMember.id}
+            baseCurrency={family.base_currency}
+            categories={categories}
+            members={members}
+            amAdmin={amAdmin}
+            onClose={() => setShowMyHistoryModal(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (view === "statistics") {
+    return (
+      <div className="dashboard">
+        <header>
+          <button
+            type="button"
+            className="back-btn"
+            onClick={() => setView("home")}
+          >
+            &larr;
+          </button>
+          <h1>Statistics</h1>
+          <ProfileMenuButton
+            myMember={myMember}
+            myRole={myRole}
+            amAdmin={amAdmin}
+            showSettings={amAdmin}
+            onOpenSettings={() => setView("settings")}
+            onSignOut={() => supabase.auth.signOut()}
+          />
+        </header>
+
+        <Statistics familyId={familyId} />
+
+        <BottomNav
+          active="statistics"
           onChange={handleNavChange}
           onAddClick={() => setShowAddSheet(true)}
         />

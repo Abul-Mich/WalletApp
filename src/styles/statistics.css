@@ -1,0 +1,375 @@
+/* ===================================================================
+   Statistics Page Styles
+   =================================================================== */
+
+.stats-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.stats-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stats-header h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+
+.stats-header p {
+  color: var(--text-muted);
+  margin: 0;
+  font-size: 14px;
+}
+
+/* ===================================================================
+   Filters Section
+   =================================================================== */
+
+.stats-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  padding: 20px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-group label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.filter-select,
+.filter-input {
+  padding: 12px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  min-height: 44px;
+}
+
+.filter-select:hover,
+.filter-input:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.filter-select:focus,
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.1);
+}
+
+/* ===================================================================
+   Summary Cards
+   =================================================================== */
+
+.stats-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.summary-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.summary-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(91, 141, 239, 0.1);
+}
+
+.summary-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.summary-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.summary-value.positive {
+  color: var(--success);
+}
+
+.summary-value.negative {
+  color: var(--danger);
+}
+
+.summary-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ===================================================================
+   Charts Section
+   =================================================================== */
+
+.stats-charts {
+  display: grid;
+  gap: 24px;
+}
+
+.chart-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chart-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+
+.chart-card.full-width {
+  grid-column: 1 / -1;
+}
+
+/* Recharts customization */
+.chart-card .recharts-wrapper {
+  margin: 0;
+}
+
+.chart-card .recharts-text {
+  font-family: inherit;
+  font-size: 12px;
+  fill: var(--text-muted);
+}
+
+.chart-card .recharts-cartesian-axis-tick {
+  font-size: 12px;
+}
+
+/* Tooltip styling */
+.chart-card .recharts-default-tooltip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* ===================================================================
+   Chart Legend (Mobile)
+   =================================================================== */
+
+.chart-legend {
+  margin-top: 12px;
+}
+
+.legend-items {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.legend-color {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-label {
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ===================================================================
+   Balance Info
+   =================================================================== */
+
+.balance-info {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 16px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.balance-info div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.balance-info strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ===================================================================
+   Empty State
+   =================================================================== */
+
+.empty-state {
+  grid-column: 1 / -1;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* ===================================================================
+   Responsive Design
+   =================================================================== */
+
+@media (max-width: 768px) {
+  .stats-container {
+    padding: 16px;
+    gap: 24px;
+  }
+
+  .stats-header h1 {
+    font-size: 24px;
+  }
+
+  .stats-filters {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .stats-summary-cards {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .chart-card {
+    padding: 16px;
+  }
+
+  .chart-card h3 {
+    font-size: 14px;
+  }
+
+  .summary-value {
+    font-size: 18px;
+  }
+
+  /* Reduce chart heights on tablet */
+  .recharts-wrapper {
+    height: 200px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-container {
+    padding: 12px;
+    gap: 16px;
+  }
+
+  .stats-header h1 {
+    font-size: 18px;
+  }
+
+  .stats-header p {
+    font-size: 12px;
+  }
+
+  .stats-filters {
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .stats-summary-cards {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .summary-card {
+    padding: 16px;
+  }
+
+  .summary-value {
+    font-size: 16px;
+  }
+
+  .balance-info {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .chart-card {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .chart-card h3 {
+    font-size: 13px;
+  }
+
+  /* Reduce chart heights on mobile */
+  .recharts-wrapper {
+    height: 160px !important;
+  }
+
+  /* Smaller pie chart labels on mobile */
+  .recharts-text {
+    font-size: 10px !important;
+  }
+
+  /* Stack summary metrics better on mobile */
+  .summary-label {
+    font-size: 11px;
+  }
+}
