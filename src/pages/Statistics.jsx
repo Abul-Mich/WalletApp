@@ -48,7 +48,15 @@ export default function Statistics({ familyId }) {
   const [balanceHistory, setBalanceHistory] = useState([]);
   const [cashFlowMetrics, setCashFlowMetrics] = useState({});
 
-  const COLORS = ["#5b8def", "#77a1f4", "#3ecf8e", "#eab04d", "#ef6a5f", "#a78bfa", "#06b6d4"];
+  const COLORS = [
+    "#5b8def",
+    "#77a1f4",
+    "#3ecf8e",
+    "#eab04d",
+    "#ef6a5f",
+    "#a78bfa",
+    "#06b6d4",
+  ];
 
   // Responsive chart heights
   useEffect(() => {
@@ -164,7 +172,14 @@ export default function Statistics({ familyId }) {
     if (familyId && session?.user?.id) {
       loadData();
     }
-  }, [familyId, session, selectedMember, dateRange, customStartDate, customEndDate]);
+  }, [
+    familyId,
+    session,
+    selectedMember,
+    dateRange,
+    customStartDate,
+    customEndDate,
+  ]);
 
   // Process transactions into charts
   useEffect(() => {
@@ -192,7 +207,10 @@ export default function Statistics({ familyId }) {
     });
 
     const trend = Object.entries(dailySpend)
-      .map(([date, amount]) => ({ date, amount: parseFloat(amount.toFixed(2)) }))
+      .map(([date, amount]) => ({
+        date,
+        amount: parseFloat(amount.toFixed(2)),
+      }))
       .sort((a, b) => new Date(a.date) - new Date(b.date));
     setSpendingTrend(trend);
 
@@ -200,8 +218,10 @@ export default function Statistics({ familyId }) {
     const categorySpend = {};
     transactions.forEach((txn) => {
       const categoryName =
-        categories.find((c) => c.id === txn.category_id)?.name || "Uncategorized";
-      categorySpend[categoryName] = (categorySpend[categoryName] || 0) + parseFloat(txn.amount);
+        categories.find((c) => c.id === txn.category_id)?.name ||
+        "Uncategorized";
+      categorySpend[categoryName] =
+        (categorySpend[categoryName] || 0) + parseFloat(txn.amount);
     });
 
     const breakdown = Object.entries(categorySpend)
@@ -214,19 +234,29 @@ export default function Statistics({ familyId }) {
     transactions.forEach((txn) => {
       const member = members.find((m) => m.id === txn.member_id);
       if (member) {
-        memberSpend[member.display_name] = (memberSpend[member.display_name] || 0) + parseFloat(txn.amount);
+        memberSpend[member.display_name] =
+          (memberSpend[member.display_name] || 0) + parseFloat(txn.amount);
       }
     });
 
     const comparison = Object.entries(memberSpend)
-      .map(([name, amount]) => ({ name, amount: parseFloat(amount.toFixed(2)) }))
+      .map(([name, amount]) => ({
+        name,
+        amount: parseFloat(amount.toFixed(2)),
+      }))
       .sort((a, b) => b.amount - a.amount);
     setMemberComparison(comparison);
 
     // 4. Cash Flow Metrics
-    const totalSpent = transactions.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+    const totalSpent = transactions.reduce(
+      (sum, t) => sum + parseFloat(t.amount),
+      0,
+    );
     const { start, end } = getDateRangeValues();
-    const daysInRange = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+    const daysInRange = Math.max(
+      1,
+      Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
+    );
     const avgDailySpend = totalSpent / daysInRange;
 
     setCashFlowMetrics({
@@ -241,7 +271,11 @@ export default function Statistics({ familyId }) {
   const { start, end } = getDateRangeValues();
 
   if (loading) {
-    return <div className="stats-container"><p>Loading statistics...</p></div>;
+    return (
+      <div className="stats-container">
+        <p>Loading statistics...</p>
+      </div>
+    );
   }
 
   return (
@@ -324,7 +358,9 @@ export default function Statistics({ familyId }) {
 
         <div className="summary-card">
           <div className="summary-label">Family Balance</div>
-          <div className="summary-value">${(wallet?.balance_cache || 0).toFixed(2)}</div>
+          <div className="summary-value">
+            ${(wallet?.balance_cache || 0).toFixed(2)}
+          </div>
           <div className="summary-meta">Current balance</div>
         </div>
 
@@ -336,8 +372,11 @@ export default function Statistics({ familyId }) {
 
         <div className="summary-card">
           <div className="summary-label">Net Change</div>
-          <div className={`summary-value ${cashFlowMetrics.netChange >= 0 ? "positive" : "negative"}`}>
-            {cashFlowMetrics.netChange >= 0 ? "+" : ""}${cashFlowMetrics.netChange.toFixed(2)}
+          <div
+            className={`summary-value ${cashFlowMetrics.netChange >= 0 ? "positive" : "negative"}`}
+          >
+            {cashFlowMetrics.netChange >= 0 ? "+" : ""}$
+            {cashFlowMetrics.netChange.toFixed(2)}
           </div>
           <div className="summary-meta">Period change</div>
         </div>
@@ -393,7 +432,10 @@ export default function Statistics({ familyId }) {
                 dataKey="value"
               >
                 {categoryBreakdown.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={COLORS[index % COLORS.length]}
+                  />
                 ))}
               </Pie>
               <Tooltip
@@ -404,7 +446,10 @@ export default function Statistics({ familyId }) {
                   fontSize: "12px",
                 }}
                 labelStyle={{ color: "var(--text)" }}
-                formatter={(value, name, props) => [`$${value}`, props.payload.name]}
+                formatter={(value, name, props) => [
+                  `$${value}`,
+                  props.payload.name,
+                ]}
               />
             </PieChart>
           </ResponsiveContainer>
@@ -444,7 +489,11 @@ export default function Statistics({ familyId }) {
                   }}
                   labelStyle={{ color: "var(--text)" }}
                 />
-                <Bar dataKey="amount" fill="var(--accent)" radius={[8, 8, 0, 0]} />
+                <Bar
+                  dataKey="amount"
+                  fill="var(--accent)"
+                  radius={[8, 8, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -454,8 +503,13 @@ export default function Statistics({ familyId }) {
         <div className="chart-card full-width">
           <h3>Family Balance Overview</h3>
           <div className="balance-info">
-            <div>Current Balance: <strong>${(wallet?.balance_cache || 0).toFixed(2)}</strong></div>
-            <div>Period: {start.toLocaleDateString()} — {end.toLocaleDateString()}</div>
+            <div>
+              Current Balance:{" "}
+              <strong>${(wallet?.balance_cache || 0).toFixed(2)}</strong>
+            </div>
+            <div>
+              Period: {start.toLocaleDateString()} — {end.toLocaleDateString()}
+            </div>
           </div>
         </div>
       </div>
