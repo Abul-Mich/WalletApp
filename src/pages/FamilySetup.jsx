@@ -1,19 +1,12 @@
 import { useState } from 'react'
 import { supabase } from '../supabaseClient'
-import { useAuth } from '../AuthContext'
+import { createFamily, joinFamily } from '../lib/wallets'
 
 const DEFAULT_CATEGORIES = ['Groceries', 'School', 'Entertainment', 'Medical', 'Other']
 
-function randomInviteCode() {
-  // Short, human-typeable code (e.g. "7F3K9A")
-  return Math.random().toString(36).slice(2, 8).toUpperCase()
-}
-
 export default function FamilySetup({ onFamilyReady }) {
-  const { session } = useAuth()
   const [tab, setTab] = useState('create') // 'create' | 'join'
   const [familyName, setFamilyName] = useState('')
-  const [baseCurrency, setBaseCurrency] = useState('USD')
   const [displayName, setDisplayName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -24,52 +17,14 @@ export default function FamilySetup({ onFamilyReady }) {
     setBusy(true)
     setError(null)
     try {
-      // Generate IDs up front instead of using .select() after insert.
-      // Why: insert().select() does an INSERT...RETURNING, and Postgres still
-      // enforces the SELECT policy on the returned row. families_select requires
-      // the caller to already be a member of that family — but at this exact
-      // moment they aren't a member yet (that happens in step 2 below). Knowing
-      // the id ahead of time sidesteps needing that read entirely.
-      const familyId = crypto.randomUUID()
-      const memberId = crypto.randomUUID()
-
-      // 1. Create the family
-      const { error: famErr } = await supabase
-        .from('families')
-        .insert({ id: familyId, name: familyName, base_currency: baseCurrency })
-      if (famErr) throw famErr
-
-      // 2. Add the current user as admin
-      const { error: memErr } = await supabase.from('members').insert({
-        id: memberId,
-        family_id: familyId,
-        user_id: session.user.id,
-        display_name: displayName || session.user.email,
-        role: 'superadmin',
-        preferred_currency: baseCurrency
-      })
-      if (memErr) throw memErr
-
-      // 3. Create the wallet
-      const { error: walletErr } = await supabase
-        .from('wallets')
-        .insert({ family_id: familyId, balance_cache: 0 })
-      if (walletErr) throw walletErr
-
-      // 4. Seed default categories (FR11)
+      // One database function creates the family, your admin membership,
+      // the family pool and your two wallets (USD + LBP) together.
+      const family = await createFamily({ name: familyName, displayName })
       const { error: catErr } = await supabase.from('categories').insert(
-        DEFAULT_CATEGORIES.map((name) => ({ family_id: familyId, name, is_default: true }))
+        DEFAULT_CATEGORIES.map((name) => ({ family_id: family.id, name, is_default: true }))
       )
       if (catErr) throw catErr
-
-      // 5. Generate a first invite code so the admin has something to share immediately
-      await supabase.from('family_invites').insert({
-        family_id: familyId,
-        code: randomInviteCode(),
-        created_by_member_id: memberId
-      })
-
-      onFamilyReady(familyId)
+      onFamilyReady(family.id)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -82,27 +37,8 @@ export default function FamilySetup({ onFamilyReady }) {
     setBusy(true)
     setError(null)
     try {
-      const code = inviteCode.trim().toUpperCase()
-
-      const { data: invite, error: inviteErr } = await supabase
-        .from('family_invites')
-        .select('*')
-        .eq('code', code)
-        .is('used_at', null)
-        .gt('expires_at', new Date().toISOString())
-        .single()
-      if (inviteErr || !invite) throw new Error('Invalid or expired invite code.')
-
-      const { error: memErr } = await supabase.from('members').insert({
-        family_id: invite.family_id,
-        user_id: session.user.id,
-        display_name: displayName || session.user.email,
-        role: 'member',
-        preferred_currency: 'USD'
-      })
-      if (memErr) throw memErr
-
-      onFamilyReady(invite.family_id)
+      const member = await joinFamily({ code: inviteCode.trim(), displayName })
+      onFamilyReady(member.family_id)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -135,12 +71,8 @@ export default function FamilySetup({ onFamilyReady }) {
             placeholder="Your display name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
+            required
           />
-          <select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)}>
-            <option value="USD">USD — US Dollar</option>
-            <option value="EUR">EUR — Euro</option>
-            <option value="LBP">LBP — Lebanese Pound</option>
-          </select>
           <button type="submit" disabled={busy}>
             {busy ? 'Creating...' : 'Create Family (become Superadmin)'}
           </button>
@@ -157,6 +89,7 @@ export default function FamilySetup({ onFamilyReady }) {
             placeholder="Your display name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
+            required
           />
           <button type="submit" disabled={busy}>
             {busy ? 'Joining...' : 'Join Family'}

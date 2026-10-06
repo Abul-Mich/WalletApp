@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { setMemberLimit, setRole, removeMember as removeMemberRpc } from "../lib/wallets";
 
 export default function AdminSettings({
   familyId,
   family,
   members,
   categories,
-  baseCurrency,
   memberSpends,
   amSuperadmin,
   myMemberId,
@@ -23,6 +23,7 @@ export default function AdminSettings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  members = members.filter((m) => !m.removed_at);
   const activeLimitCount = members.filter(
     (m) => m.spending_limit_amount,
   ).length;
@@ -84,15 +85,11 @@ export default function AdminSettings({
     setError(null);
     try {
       const edit = editFor(member);
-      const { error: err } = await supabase
-        .from("members")
-        .update({
-          spending_limit_amount:
-            edit.amount === "" ? null : parseFloat(edit.amount),
-          spending_limit_period: edit.amount === "" ? null : edit.period,
-        })
-        .eq("id", member.id);
-      if (err) throw err;
+      await setMemberLimit({
+        memberId: member.id,
+        amount: edit.amount === "" ? null : parseFloat(edit.amount),
+        period: edit.amount === "" ? null : edit.period,
+      });
       onDone?.();
     } catch (err) {
       setError(err.message);
@@ -189,11 +186,7 @@ export default function AdminSettings({
     setBusy(true);
     setError(null);
     try {
-      const { error: err } = await supabase
-        .from("members")
-        .update({ role: newRole })
-        .eq("id", member.id);
-      if (err) throw err;
+      await setRole({ memberId: member.id, role: newRole });
       onDone?.();
     } catch (err) {
       setError(err.message);
@@ -207,44 +200,11 @@ export default function AdminSettings({
     setBusy(true);
     setError(null);
     try {
-      const { error: err } = await supabase
-        .from("members")
-        .delete()
-        .eq("id", member.id);
-      if (err) throw err;
+      await removeMemberRpc(member.id);
       onDone?.();
     } catch (err) {
       setError(err.message);
     } finally {
-      setBusy(false);
-    }
-  }
-
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
-
-  async function deleteFamily() {
-    if (deleteConfirmText.trim() !== family.name) return;
-    if (
-      !confirm(
-        `This permanently deletes "${family.name}" — every member, transaction, card, and balance. This cannot be undone. Continue?`,
-      )
-    )
-      return;
-    setBusy(true);
-    setError(null);
-    try {
-      const { error: err } = await supabase
-        .from("families")
-        .delete()
-        .eq("id", familyId);
-      if (err) throw err;
-      // The family row (and every row that references it) is gone,
-      // including this device's own member row — the cleanest way back to
-      // a consistent state is to just reload, so App.jsx's membership check
-      // runs fresh and lands on FamilySetup.
-      window.location.reload();
-    } catch (err) {
-      setError(err.message);
       setBusy(false);
     }
   }
@@ -256,7 +216,7 @@ export default function AdminSettings({
           <span className="settings-overview-label">Family budget</span>
           <strong>
             {familyBudget.amount
-              ? `${familyBudget.amount} ${baseCurrency}`
+              ? `${familyBudget.amount} $USD`
               : "No budget set"}
           </strong>
         </div>
@@ -302,7 +262,7 @@ export default function AdminSettings({
             <option value="weekly">weekly</option>
             <option value="monthly">monthly</option>
           </select>
-          <span className="limit-currency">{baseCurrency}</span>
+          <span className="limit-currency">USD</span>
           <button type="submit" disabled={busy}>
             Save
           </button>
@@ -333,7 +293,7 @@ export default function AdminSettings({
                       <span>{m.display_name}</span>
                       <span>
                         {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)}{" "}
-                        {baseCurrency} ({spend.period})
+                        USD ({spend.period})
                       </span>
                     </div>
                     <div className="breakdown-bar-track">
@@ -357,7 +317,7 @@ export default function AdminSettings({
                   <span className="setting-item-title">{m.display_name}</span>
                   <span className="setting-item-meta">
                     {edit.amount
-                      ? `${edit.amount} ${baseCurrency} / ${edit.period}`
+                      ? `${edit.amount} $USD / ${edit.period}`
                       : "No limit set"}
                   </span>
                 </div>
@@ -381,7 +341,7 @@ export default function AdminSettings({
                     <option value="weekly">weekly</option>
                     <option value="monthly">monthly</option>
                   </select>
-                  <span className="limit-currency">{baseCurrency}</span>
+                  <span className="limit-currency">USD</span>
                   <button
                     type="button"
                     disabled={busy}
@@ -440,7 +400,7 @@ export default function AdminSettings({
               </span>
               <span className="setting-item-meta">
                 {selectedCategoryEdit?.amount
-                  ? `${selectedCategoryEdit.amount} ${baseCurrency} / ${selectedCategoryEdit.period}`
+                  ? `${selectedCategoryEdit.amount} $USD / ${selectedCategoryEdit.period}`
                   : "No budget set"}
               </span>
             </div>
@@ -541,35 +501,6 @@ export default function AdminSettings({
                   </div>
                 </div>
               ))}
-          </div>
-        </section>
-      )}
-
-      {amSuperadmin && (
-        <section className="settings-card danger-zone">
-          <div className="settings-card-header">
-            <div>
-              <h3 className="subsection">Danger Zone</h3>
-              <p className="hint">
-                Permanently deletes "{family.name}" — every member,
-                transaction, card, and balance. This cannot be undone.
-              </p>
-            </div>
-          </div>
-          <div className="settings-form">
-            <input
-              placeholder={`Type "${family.name}" to confirm`}
-              value={deleteConfirmText}
-              onChange={(e) => setDeleteConfirmText(e.target.value)}
-            />
-            <button
-              type="button"
-              className="remove-btn"
-              disabled={busy || deleteConfirmText.trim() !== family.name}
-              onClick={deleteFamily}
-            >
-              Delete Family
-            </button>
           </div>
         </section>
       )}

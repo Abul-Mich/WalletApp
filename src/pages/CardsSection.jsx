@@ -1,22 +1,16 @@
 import { useState } from "react";
-import { supabase } from "../supabaseClient";
+import { createCard, fmtMoney } from "../lib/wallets";
 import CardDetailModal from "./CardDetailModal";
 
 export default function CardsSection({
-  familyId,
-  memberId,
-  baseCurrency,
-  cards,
-  members,
-  amAdmin,
-  amSuperadmin,
-  onChanged,
+  familyId, memberId, cards, accounts, members, amAdmin, amSuperadmin, onChanged,
 }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
   const selectedCard = cards.find((c) => c.id === selectedCardId) || null;
   const [showNewCard, setShowNewCard] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [name, setName] = useState("");
+  const [currency, setCurrency] = useState("USD");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -29,12 +23,7 @@ export default function CardsSection({
     setBusy(true);
     setError(null);
     try {
-      const { error: err } = await supabase.from("cards").insert({
-        family_id: familyId,
-        name: name.trim(),
-        created_by: memberId,
-      });
-      if (err) throw err;
+      await createCard({ familyId, name: name.trim(), currency });
       setName("");
       setShowNewCard(false);
       onChanged?.();
@@ -50,11 +39,7 @@ export default function CardsSection({
       <div className="card-header-row">
         <h2>Cards</h2>
         {amAdmin && (
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => setShowNewCard((v) => !v)}
-          >
+          <button type="button" className="link-button" onClick={() => setShowNewCard((v) => !v)}>
             {showNewCard ? "Cancel" : "New Card"}
           </button>
         )}
@@ -62,61 +47,48 @@ export default function CardsSection({
 
       {showNewCard && (
         <form onSubmit={handleCreate} className="inline-form">
-          <input
-            placeholder="Card name (e.g. Fuel Card)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <button type="submit" disabled={busy}>
-            {busy ? "Creating..." : "Create Card"}
-          </button>
+          <input placeholder="Card name (e.g. Fuel Card)" value={name} onChange={(e) => setName(e.target.value)} required />
+          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            <option value="USD">USD card</option>
+            <option value="LBP">LBP card</option>
+          </select>
+          <button type="submit" disabled={busy}>{busy ? "Creating..." : "Create Card"}</button>
           {error && <p className="status error">{error}</p>}
         </form>
       )}
 
-      {activeCards.length === 0 && !showNewCard && (
-        <p className="hint">No shared cards yet.</p>
-      )}
+      {activeCards.length === 0 && !showNewCard && <p className="hint">No shared cards yet.</p>}
 
       <ul className="card-list">
-        {visibleCards.map((c) => (
-          <li key={c.id}>
-            <button
-              type="button"
-              className={`card-list-item ${c.archived ? "archived" : ""}`}
-              onClick={() => setSelectedCardId(c.id)}
-            >
-              <span>
-                {c.name}
-                {c.archived && <span className="pill-archived">Archived</span>}
-              </span>
-              <span className="balance-inline">
-                {Number(c.balance_cache).toFixed(2)} {baseCurrency}
-              </span>
-            </button>
-          </li>
-        ))}
+        {visibleCards.map((c) => {
+          const a = accounts.cards[c.id];
+          return (
+            <li key={c.id}>
+              <button type="button" className={`card-list-item ${c.archived ? "archived" : ""}`} onClick={() => setSelectedCardId(c.id)}>
+                <span>
+                  {c.name}
+                  {c.archived && <span className="pill-archived">Archived</span>}
+                </span>
+                <span className="balance-inline">{a ? fmtMoney(a.balance_cache, a.currency) : "—"}</span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
 
       {archivedCards.length > 0 && (
-        <button
-          type="button"
-          className="link-button"
-          onClick={() => setShowArchived((v) => !v)}
-        >
-          {showArchived
-            ? "Hide archived cards"
-            : `Show ${archivedCards.length} archived card${archivedCards.length > 1 ? "s" : ""}`}
+        <button type="button" className="link-button" onClick={() => setShowArchived((v) => !v)}>
+          {showArchived ? "Hide archived cards" : `Show ${archivedCards.length} archived card${archivedCards.length > 1 ? "s" : ""}`}
         </button>
       )}
 
-      {selectedCard && (
+      {selectedCard && accounts.cards[selectedCard.id] && (
         <CardDetailModal
           familyId={familyId}
           memberId={memberId}
           card={selectedCard}
-          baseCurrency={baseCurrency}
+          cardAccount={accounts.cards[selectedCard.id]}
+          poolAccounts={accounts.pool}
           members={members}
           amAdmin={amAdmin}
           amSuperadmin={amSuperadmin}

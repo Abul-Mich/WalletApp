@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../AuthContext";
 import { isAdmin } from "../lib/roles";
+import { loadAccounts, latestLbpRate, bal } from "../lib/wallets";
 import {
   LineChart,
   Line,
@@ -20,6 +21,10 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import "../styles/statistics.css";
+
+// Every amount here is net USD (the figure that counts toward limits).
+const usd = (t) =>
+  t.net_usd != null ? Number(t.net_usd) : Number(t.amount) * Number(t.exchange_rate_to_base || 1);
 
 export default function Statistics({ familyId }) {
   const { session } = useAuth();
@@ -127,13 +132,15 @@ export default function Statistics({ familyId }) {
         setMyMember(myMemberData);
       }
 
-      // Get wallet
-      const { data: walletData } = await supabase
-        .from("wallets")
-        .select("*")
-        .eq("family_id", familyId)
-        .single();
-      setWallet(walletData);
+      // Whole-family money in USD (pool + members + cards) at the family rate
+      const accts = await loadAccounts(familyId);
+      const rate = await latestLbpRate(familyId);
+      const totalUsd = accts.reduce(
+        (sum, a) =>
+          sum + (a.currency === "USD" ? bal(a) : rate > 0 ? bal(a) / rate : 0),
+        0,
+      );
+      setWallet({ balance_cache: totalUsd });
 
       // Get categories
       const { data: categoriesData } = await supabase
@@ -158,7 +165,19 @@ export default function Statistics({ familyId }) {
       const { data: txnData } = await query.order("created_at", {
         ascending: true,
       });
-      setTransactions(txnData || []);
+      let cardQuery = supabase
+        .from("card_transactions")
+        .select("*")
+        .eq("family_id", familyId)
+        .gte("created_at", start.toISOString())
+        .lte("created_at", end.toISOString());
+      if (selectedMember !== "all") cardQuery = cardQuery.eq("member_id", selectedMember);
+      const { data: cardData } = await cardQuery;
+      const merged = [
+        ...(txnData || []),
+        ...(cardData || []).map((c) => ({ ...c, category_id: null, _card: true })),
+      ].sort((x, y) => new Date(x.created_at) - new Date(y.created_at));
+      setTransactions(merged);
 
       setLoading(false);
     } catch (error) {
@@ -203,7 +222,7 @@ export default function Statistics({ familyId }) {
         month: "short",
         day: "numeric",
       });
-      dailySpend[date] = (dailySpend[date] || 0) + parseFloat(txn.amount);
+      dailySpend[date] = (dailySpend[date] || 0) + usd(txn);
     });
 
     const trend = Object.entries(dailySpend)
@@ -218,10 +237,10 @@ export default function Statistics({ familyId }) {
     const categorySpend = {};
     transactions.forEach((txn) => {
       const categoryName =
-        categories.find((c) => c.id === txn.category_id)?.name ||
+        (txn._card ? "Card spending" : categories.find((c) => c.id === txn.category_id)?.name) ||
         "Uncategorized";
       categorySpend[categoryName] =
-        (categorySpend[categoryName] || 0) + parseFloat(txn.amount);
+        (categorySpend[categoryName] || 0) + usd(txn);
     });
 
     const breakdown = Object.entries(categorySpend)
@@ -235,7 +254,7 @@ export default function Statistics({ familyId }) {
       const member = members.find((m) => m.id === txn.member_id);
       if (member) {
         memberSpend[member.display_name] =
-          (memberSpend[member.display_name] || 0) + parseFloat(txn.amount);
+          (memberSpend[member.display_name] || 0) + usd(txn);
       }
     });
 
@@ -249,7 +268,7 @@ export default function Statistics({ familyId }) {
 
     // 4. Cash Flow Metrics
     const totalSpent = transactions.reduce(
-      (sum, t) => sum + parseFloat(t.amount),
+      (sum, t) => sum + usd(t),
       0,
     );
     const { start, end } = getDateRangeValues();
@@ -357,7 +376,7 @@ export default function Statistics({ familyId }) {
         </div>
 
         <div className="summary-card">
-          <div className="summary-label">Family Balance</div>
+          <div className="summary-label">Family Money (USD)</div>
           <div className="summary-value">
             ${(wallet?.balance_cache || 0).toFixed(2)}
           </div>

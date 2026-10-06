@@ -1,63 +1,44 @@
-import { useState } from 'react'
-import { supabase } from '../supabaseClient'
-import { getExchangeRate, SUPPORTED_CURRENCIES } from '../lib/exchangeRates'
+import { useState } from "react";
+import { createTransfer, fmtMoney } from "../lib/wallets";
 
-// Moves money from the family's unallocated balance onto a shared prepaid
-// card. Any member can do this — the server-side trigger checks there's
-// enough unallocated family balance (not already claimed by a member's own
-// balance or another card).
-export default function CardTopUpForm({ familyId, memberId, cardId, baseCurrency, onDone }) {
-  const [amount, setAmount] = useState('')
-  const [currency, setCurrency] = useState(baseCurrency)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
+// Moves money from the family pool onto a shared prepaid card (same currency
+// as the card). Any member can do this; the database refuses if the pool
+// does not have enough.
+export default function CardTopUpForm({ cardAccount, poolAccounts, members, onDone }) {
+  const [tag, setTag] = useState("");
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const cur = cardAccount.currency;
+  const pool = poolAccounts?.[cur];
 
   async function handleSubmit(e) {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
     try {
-      const rate = await getExchangeRate(familyId, currency, baseCurrency)
-      const { error: err } = await supabase.from('card_transfers').insert({
-        family_id: familyId,
-        card_id: cardId,
-        member_id: memberId,
-        amount: parseFloat(amount),
-        currency,
-        exchange_rate_to_base: rate
-      })
-      if (err) throw err
-      setAmount('')
-      onDone?.()
+      await createTransfer({ from: pool.id, to: cardAccount.id, amount: parseFloat(amount), taggedMemberId: tag || null });
+      setAmount("");
+      onDone?.();
     } catch (err) {
-      setError(err.message)
+      setError(err.message);
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
   }
 
   return (
     <form onSubmit={handleSubmit} className="inline-form">
-      <input
-        type="number"
-        step="0.01"
-        min="0.01"
-        placeholder="Amount"
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        required
-      />
-      <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-        {SUPPORTED_CURRENCIES.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
+      <p className="hint">
+        Family pool: {fmtMoney(pool?.balance_cache, cur)} · this card holds {cur}
+      </p>
+      <input type="number" step="any" min="0" placeholder={`Amount (${cur})`} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+      <select value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Tag a family member (optional)">
+        <option value="">No tag (optional)</option>
+        {(members || []).map((m) => (<option key={m.id} value={m.id}>For {m.display_name}</option>))}
       </select>
-      <button type="submit" disabled={busy}>
-        {busy ? 'Adding...' : 'Top Up Card'}
-      </button>
+      <button type="submit" disabled={busy || !pool}>{busy ? "Adding..." : "Top Up Card"}</button>
       {error && <p className="status error">{error}</p>}
     </form>
-  )
+  );
 }

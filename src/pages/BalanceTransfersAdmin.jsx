@@ -1,65 +1,47 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import { deleteTransfer, deleteExchange, fmtMoney, fmtWhen } from "../lib/wallets";
 
 const PAGE_SIZE = 20;
 
-// There was previously no UI at all for member_balance_transfers (top-ups /
-// returns between a member and the shared family balance) — only insert-only
-// forms. This gives admins a place to see and correct them, backed by the
-// admin-only update/delete RLS policies on that table.
-export default function BalanceTransfersAdmin({
-  familyId,
-  baseCurrency,
-  onChanged,
-  reloadTrigger,
-}) {
+// Admin view of every money movement: transfers between the pool, members
+// and cards, plus currency exchanges. Mistakes are fixed by deleting the
+// entry and entering it again (the ledger never rewrites history).
+export default function BalanceTransfersAdmin({ familyId, rawAccounts, members, cards, reloadTrigger, onChanged }) {
   const [rows, setRows] = useState([]);
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState(null);
-  const [editAmount, setEditAmount] = useState("");
   const [error, setError] = useState(null);
 
-  async function load(nextLimit) {
+  const acctName = (id) => {
+    const a = rawAccounts.find((x) => x.id === id);
+    if (!a) return "?";
+    if (a.owner_kind === "pool") return `Family pool ${a.currency}`;
+    if (a.owner_kind === "member")
+      return `${members.find((m) => m.id === a.member_id)?.display_name ?? "Member"} ${a.currency}`;
+    return `${cards.find((c) => c.id === a.card_id)?.name ?? "Card"}`;
+  };
+  const curOf = (id) => rawAccounts.find((x) => x.id === id)?.currency;
+
+  async function load(n) {
     setLoading(true);
     setError(null);
-
-    const [
-      { data: transfers, error: transfersError },
-      { data: members, error: membersError },
-    ] = await Promise.all([
-      supabase
-        .from("member_balance_transfers")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(nextLimit),
-      supabase
-        .from("members")
-        .select("id, display_name")
-        .eq("family_id", familyId),
+    const [{ data: tr, error: e1 }, { data: ex, error: e2 }] = await Promise.all([
+      supabase.from("transfers").select("*").eq("family_id", familyId).order("created_at", { ascending: false }).limit(n),
+      supabase.from("exchanges").select("*").eq("family_id", familyId).order("created_at", { ascending: false }).limit(n),
     ]);
-
-    if (transfersError || membersError) {
-      setError((transfersError || membersError).message);
+    if (e1 || e2) {
+      setError((e1 || e2).message);
       setRows([]);
-      setHasMore(false);
-      setLoading(false);
-      return;
+    } else {
+      const all = [
+        ...(tr || []).map((r) => ({ ...r, kind: "transfer" })),
+        ...(ex || []).map((r) => ({ ...r, kind: "exchange" })),
+      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setRows(all.slice(0, n));
+      setHasMore((tr || []).length === n || (ex || []).length === n);
     }
-
-    const memberNames = (members || []).reduce((map, member) => {
-      map[member.id] = member.display_name;
-      return map;
-    }, {});
-
-    const rowsWithNames = (transfers || []).map((t) => ({
-      ...t,
-      member_display_name: memberNames[t.member_id] || "Unknown",
-    }));
-
-    setRows(rowsWithNames);
-    setHasMore((transfers || []).length === nextLimit);
     setLoading(false);
   }
 
@@ -68,131 +50,46 @@ export default function BalanceTransfersAdmin({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit, reloadTrigger]);
 
-  function refresh() {
-    setLimit(PAGE_SIZE);
-    load(PAGE_SIZE);
-    onChanged?.();
-  }
-
-  async function saveEdit(row) {
-    setError(null);
-    const parsed = parseFloat(editAmount);
-    if (Number.isNaN(parsed) || parsed === 0) {
-      setError("Enter a non-zero amount.");
-      return;
-    }
-    // Preserve the original sign (top-up vs return) unless the admin typed
-    // a different sign explicitly.
-    const { error: err } = await supabase
-      .from("member_balance_transfers")
-      .update({ amount: parsed })
-      .eq("id", row.id);
-    if (err) {
+  async function remove(r) {
+    if (!confirm("Delete this entry? Balances will be recalculated.")) return;
+    try {
+      if (r.kind === "transfer") await deleteTransfer(r.id);
+      else await deleteExchange(r.id);
+      setLimit(PAGE_SIZE);
+      load(PAGE_SIZE);
+      onChanged?.();
+    } catch (err) {
       setError(err.message);
-      return;
     }
-    setEditingId(null);
-    refresh();
-  }
-
-  async function remove(row) {
-    if (
-      !confirm("Delete this entry? The member's balance will be recalculated.")
-    )
-      return;
-    const { error: err } = await supabase
-      .from("member_balance_transfers")
-      .delete()
-      .eq("id", row.id);
-    if (err) {
-      setError(err.message);
-      return;
-    }
-    refresh();
   }
 
   return (
     <div>
       {error && <p className="status error">{error}</p>}
       {loading && rows.length === 0 && <p className="hint">Loading...</p>}
-      {!loading && rows.length === 0 && (
-        <p className="hint">No balance transfers yet.</p>
-      )}
-
+      {!loading && rows.length === 0 && <p className="hint">No money movements yet.</p>}
       <ul className="txn-list">
         {rows.map((r) => (
-          <li key={r.id}>
-            {editingId === r.id ? (
-              <div className="inline-form">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editAmount}
-                  onChange={(e) => setEditAmount(e.target.value)}
-                />
-                <button type="button" onClick={() => saveEdit(r)}>
-                  Save
-                </button>
-                <button
-                  type="button"
-                  className="remove-btn"
-                  onClick={() => setEditingId(null)}
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <>
-                <div>
-                  <span className="txn-amount">
-                    {Number(r.amount) > 0 ? "+" : ""}
-                    {Number(r.amount).toFixed(2)} {r.currency}
-                    {r.currency !== baseCurrency && (
-                      <span className="txn-converted">
-                        {" "}
-                        (≈{(r.amount * r.exchange_rate_to_base).toFixed(2)}{" "}
-                        {baseCurrency})
-                      </span>
-                    )}
-                  </span>
-                  <span className="txn-meta">
-                    {Number(r.amount) > 0
-                      ? "Withdraw from Main"
-                      : "Return to Main"}{" "}
-                    · {r.member_display_name}
-                  </span>
-                </div>
-                <div className="txn-actions">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(r.id);
-                      setEditAmount(String(r.amount));
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="remove-btn"
-                    onClick={() => remove(r)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </>
-            )}
+          <li key={`${r.kind}-${r.id}`}>
+            <div>
+              <span className="txn-amount">
+                {r.kind === "transfer"
+                  ? fmtMoney(r.amount, curOf(r.from_account_id))
+                  : `${fmtMoney(r.amount_from, curOf(r.from_account_id))} → ${fmtMoney(r.amount_to, curOf(r.to_account_id))}`}
+              </span>
+              <span className="txn-meta">
+                {r.kind === "transfer" ? "Transfer" : "Exchange"}: {acctName(r.from_account_id)} → {acctName(r.to_account_id)} · {fmtWhen(r.created_at)}
+              </span>
+            </div>
+            {r.note && <p className="txn-note">{r.note}</p>}
+            <div className="txn-actions">
+              <button type="button" className="remove-btn" onClick={() => remove(r)}>Delete</button>
+            </div>
           </li>
         ))}
       </ul>
-
       {hasMore && (
-        <button
-          type="button"
-          className="load-more"
-          disabled={loading}
-          onClick={() => setLimit((l) => l + PAGE_SIZE)}
-        >
+        <button type="button" className="load-more" disabled={loading} onClick={() => setLimit((l) => l + PAGE_SIZE)}>
           {loading ? "Loading..." : "Load 20 More"}
         </button>
       )}
