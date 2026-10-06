@@ -17,7 +17,6 @@ export default function TransactionHistoryModal({
   familyId,
   memberId,
   viewerId,
-  baseCurrency,
   categories,
   members,
   amAdmin,
@@ -228,8 +227,6 @@ export default function TransactionHistoryModal({
               <TransactionRow
                 key={t.id}
                 t={t}
-                familyId={familyId}
-                baseCurrency={baseCurrency}
                 categories={categories}
                 members={members}
                 canManage={amAdmin || t.member_id === effectiveViewerId}

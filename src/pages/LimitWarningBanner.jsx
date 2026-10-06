@@ -1,4 +1,4 @@
-export default function LimitWarningBanner({ spend, baseCurrency }) {
+export default function LimitWarningBanner({ spend }) {
   if (!spend || (!spend.isNearLimit && !spend.isOverLimit)) return null
 
   return (
@@ -6,12 +6,12 @@ export default function LimitWarningBanner({ spend, baseCurrency }) {
       {spend.isOverLimit ? (
         <>
           You're over your {spend.period} limit: {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)}{' '}
-          {baseCurrency}
+          USD
         </>
       ) : (
         <>
           Heads up — you've used {(spend.percentUsed * 100).toFixed(0)}% of your {spend.period} limit (
-          {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)} {baseCurrency})
+          {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)} USD)
         </>
       )}
     </div>

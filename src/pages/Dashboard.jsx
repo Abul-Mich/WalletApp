@@ -18,7 +18,7 @@ import BalanceTransfersAdmin from "./BalanceTransfersAdmin";
 import FamilyBalanceCard from "./FamilyBalanceCard";
 import FamilyBalanceHistoryAdmin from "./FamilyBalanceHistoryAdmin";
 import Statistics from "./Statistics";
-import { getMemberSpend } from "../lib/spendingLimits";
+import { getMemberSpend, loadAccounts, groupAccounts, latestLbpRate, createInvite, fmtMoney, bal } from "../lib/wallets";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
 
@@ -120,7 +120,9 @@ export default function Dashboard({ familyId }) {
   const [members, setMembers] = useState([]);
   const [myMember, setMyMember] = useState(null);
   const [invite, setInvite] = useState(null);
-  const [wallet, setWallet] = useState(null);
+  const [rawAccounts, setRawAccounts] = useState([]);
+  const [rate, setRate] = useState(null);
+  const [allMembers, setAllMembers] = useState([]);
   const [cards, setCards] = useState([]);
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -173,33 +175,41 @@ export default function Dashboard({ familyId }) {
       .from("family_invites")
       .select("*")
       .eq("family_id", familyId)
+      .is("used_at", null)
+      .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    const resolvedMember = (mem || []).find(
-      (m) => m.user_id === session.user.id,
-    );
+    const active = (mem || []).filter((m) => !m.removed_at);
+    const resolvedMember = active.find((m) => m.user_id === session.user.id);
 
     setFamily(fam);
-    setMembers(mem || []);
+    setAllMembers(mem || []);
+    setMembers(active);
     setMyMember(resolvedMember);
     setInvite(inv);
 
     loadMySpend(resolvedMember);
-    loadAllMemberSpends(mem);
+    loadAllMemberSpends(active);
     if (fam) loadFamilyBudget(fam);
 
     return resolvedMember;
   }
 
   async function loadWallet() {
-    const { data } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("family_id", familyId)
-      .single();
-    setWallet(data);
+    const [accts, r] = await Promise.all([loadAccounts(familyId), latestLbpRate(familyId)]);
+    setRawAccounts(accts);
+    setRate(r);
+  }
+
+  async function newInvite() {
+    try {
+      const inv = await createInvite(familyId);
+      setInvite(inv);
+    } catch (err) {
+      alert(err.message);
+    }
   }
 
   async function loadCards() {
@@ -296,13 +306,15 @@ export default function Dashboard({ familyId }) {
     // transaction list, not this summary.
     const { data } = await supabase
       .from("transactions")
-      .select("amount, exchange_rate_to_base, categories(name)")
+      .select("net_usd, amount, exchange_rate_to_base, categories(name)")
       .eq("family_id", familyId);
 
     const totals = {};
     for (const t of data || []) {
       const name = t.categories?.name ?? "Uncategorized";
-      totals[name] = (totals[name] || 0) + t.amount * t.exchange_rate_to_base;
+      totals[name] =
+        (totals[name] || 0) +
+        (t.net_usd != null ? Number(t.net_usd) : t.amount * t.exchange_rate_to_base);
     }
     setBreakdown(Object.entries(totals).sort((a, b) => b[1] - a[1]));
   }
@@ -398,7 +410,7 @@ export default function Dashboard({ familyId }) {
         {
           event: "*",
           schema: "public",
-          table: "wallets",
+          table: "wallet_accounts",
           filter: `family_id=eq.${familyId}`,
         },
         loadWallet,
@@ -434,8 +446,8 @@ export default function Dashboard({ familyId }) {
                 {
                   id: row.id,
                   memberName: member?.display_name ?? "Someone",
-                  amount: row.amount,
-                  currency: row.currency,
+                  amount: row.net_usd ?? row.amount,
+                  currency: row.net_usd != null ? "USD" : row.currency,
                   categoryName: category?.name ?? null,
                   timeLabel: new Date(row.created_at).toLocaleTimeString([], {
                     hour: "2-digit",
@@ -498,13 +510,27 @@ export default function Dashboard({ familyId }) {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
-          table: "member_balance_transfers",
+          table: "transfers",
           filter: `family_id=eq.${familyId}`,
         },
         () => {
-          loadFamilyAndMembers(); // members.balance changed — refresh members
+          loadWallet();
+          loadTransactions();
+          setBalanceTransfersReloadCounter((current) => current + 1);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "exchanges",
+          filter: `family_id=eq.${familyId}`,
+        },
+        () => {
+          loadWallet();
           setBalanceTransfersReloadCounter((current) => current + 1);
         },
       )
@@ -535,20 +561,8 @@ export default function Dashboard({ familyId }) {
   const amAdmin = isAdmin(myRole);
   const amSuperadmin = isSuperadmin(myRole);
 
-  // How much of the family's actual cash isn't yet allocated to any
-  // member's own live balance — shown as a guardrail so members can see
-  // what's actually available to transfer into their balance.
-  const totalAllocated = members.reduce(
-    (sum, m) => sum + Number(m.balance || 0),
-    0,
-  );
-  const totalOnCards = cards.reduce(
-    (sum, c) => sum + Number(c.balance_cache || 0),
-    0,
-  );
-  const unallocated = wallet
-    ? Number(wallet.balance_cache) - totalAllocated - totalOnCards
-    : null;
+  const accounts = groupAccounts(rawAccounts);
+  const myWallets = myMember ? accounts.members[myMember.id] || {} : {};
 
   if (view === "settings" && amAdmin) {
     return (
@@ -581,7 +595,7 @@ export default function Dashboard({ familyId }) {
           <ExchangeRateOverride
             familyId={familyId}
             memberId={myMember.id}
-            baseCurrency={family.base_currency}
+            baseCurrency="USD"
           />
         </section>
 
@@ -592,7 +606,6 @@ export default function Dashboard({ familyId }) {
             family={family}
             members={members}
             categories={categories}
-            baseCurrency={family.base_currency}
             memberSpends={memberSpends}
             amSuperadmin={amSuperadmin}
             myMemberId={myMember.id}
@@ -604,14 +617,16 @@ export default function Dashboard({ familyId }) {
         </section>
 
         <section className="card">
-          <h2>Balance Transfers</h2>
+          <h2>Money Movements</h2>
           <p className="hint">
-            Every withdraw-from-main / return-to-main a member has made. Correct
-            or remove mistaken entries here.
+            Every transfer between the pool, members and cards, and every
+            exchange. Fix a mistake by deleting it and entering it again.
           </p>
           <BalanceTransfersAdmin
             familyId={familyId}
-            baseCurrency={family.base_currency}
+            rawAccounts={rawAccounts}
+            members={allMembers}
+            cards={cards}
             reloadTrigger={balanceTransfersReloadCounter}
             onChanged={() => {
               loadFamilyAndMembers();
@@ -623,12 +638,11 @@ export default function Dashboard({ familyId }) {
         <section className="card">
           <h2>Family Balance History</h2>
           <p className="hint">
-            Every deposit and direct balance correction. Admins can edit or
-            remove deposits; only the superadmin can touch direct corrections.
+            Every deposit into the family pool. Admins can delete a deposit that
+            was entered by mistake.
           </p>
           <FamilyBalanceHistoryAdmin
-            baseCurrency={family.base_currency}
-            amSuperadmin={amSuperadmin}
+            familyId={familyId}
             onChanged={() => {
               loadWallet();
               loadFamilyAndMembers();
@@ -645,9 +659,9 @@ export default function Dashboard({ familyId }) {
           <AddActionSheet
             familyId={familyId}
             memberId={myMember.id}
-            baseCurrency={family.base_currency}
             categories={categories}
-            currentBalance={Number(myMember.balance || 0)}
+            accounts={accounts}
+            amAdmin={amAdmin}
             onClose={() => setShowAddSheet(false)}
             onDone={() => {
               loadFamilyAndMembers();
@@ -691,18 +705,7 @@ export default function Dashboard({ familyId }) {
           </div>
         </header>
 
-        <FamilyBalanceCard
-          familyId={familyId}
-          memberId={myMember?.id}
-          baseCurrency={family.base_currency}
-          wallet={wallet}
-          unallocated={unallocated}
-          amSuperadmin={amSuperadmin}
-          onChanged={() => {
-            loadWallet();
-            loadFamilyAndMembers();
-          }}
-        />
+        <FamilyBalanceCard accounts={accounts} rate={rate || 0} />
 
         {familyBudgetSpend && (
           <section className="card">
@@ -711,7 +714,7 @@ export default function Dashboard({ familyId }) {
               <span>Used</span>
               <span>
                 {familyBudgetSpend.spent.toFixed(2)} /{" "}
-                {familyBudgetSpend.limit.toFixed(2)} {family.base_currency}
+                {familyBudgetSpend.limit.toFixed(2)} USD
               </span>
             </div>
             <div className="breakdown-bar-track">
@@ -742,7 +745,8 @@ export default function Dashboard({ familyId }) {
                 <span>{m.display_name}</span>
                 <span className="member-list-right">
                   <span className="member-balance">
-                    {Number(m.balance || 0).toFixed(2)} {family.base_currency}
+                    {fmtMoney(bal(accounts.members[m.id]?.USD), "USD")} ·{" "}
+                    {fmtMoney(bal(accounts.members[m.id]?.LBP), "LBP")}
                   </span>
                   <span className={`badge ${m.role}`}>{m.role}</span>
                 </span>
@@ -756,16 +760,23 @@ export default function Dashboard({ familyId }) {
             <h2>Invite Code</h2>
             <p className="invite-code">{invite.code}</p>
             <p className="hint">
-              Share this with family members so they can join.
+              Share this with family members so they can join. A code works once.
             </p>
+            <button type="button" className="link-button" onClick={newInvite}>New code</button>
+          </section>
+        )}
+        {amAdmin && !invite && (
+          <section className="card">
+            <h2>Invite Code</h2>
+            <button type="button" onClick={newInvite}>Create invite code</button>
           </section>
         )}
 
         <CardsSection
           familyId={familyId}
           memberId={myMember?.id}
-          baseCurrency={family.base_currency}
           cards={cards}
+          accounts={accounts}
           members={members}
           amAdmin={amAdmin}
           amSuperadmin={amSuperadmin}
@@ -780,8 +791,8 @@ export default function Dashboard({ familyId }) {
             <h2>Add Funds</h2>
             <DepositForm
               familyId={familyId}
-              memberId={myMember.id}
-              baseCurrency={family.base_currency}
+              accounts={accounts}
+              onDone={loadWallet}
             />
           </section>
         )}
@@ -807,10 +818,8 @@ export default function Dashboard({ familyId }) {
               <TransactionRow
                 key={t.id}
                 t={t}
-                familyId={familyId}
-                baseCurrency={family.base_currency}
                 categories={categories}
-                members={members}
+                members={allMembers}
                 canManage={t.member_id === myMember?.id || amAdmin}
                 onChanged={() => {
                   loadTransactions();
@@ -827,9 +836,8 @@ export default function Dashboard({ familyId }) {
           <TransactionHistoryModal
             familyId={familyId}
             viewerId={myMember?.id}
-            baseCurrency={family.base_currency}
             categories={categories}
-            members={members}
+            members={allMembers}
             amAdmin={amAdmin}
             onClose={() => setShowFamilyHistoryModal(false)}
           />
@@ -849,9 +857,9 @@ export default function Dashboard({ familyId }) {
           <AddActionSheet
             familyId={familyId}
             memberId={myMember.id}
-            baseCurrency={family.base_currency}
             categories={categories}
-            currentBalance={Number(myMember.balance || 0)}
+            accounts={accounts}
+            amAdmin={amAdmin}
             onClose={() => setShowAddSheet(false)}
             onDone={() => {
               loadFamilyAndMembers();
@@ -919,9 +927,9 @@ export default function Dashboard({ familyId }) {
           <AddActionSheet
             familyId={familyId}
             memberId={myMember.id}
-            baseCurrency={family.base_currency}
             categories={categories}
-            currentBalance={Number(myMember.balance || 0)}
+            accounts={accounts}
+            amAdmin={amAdmin}
             onClose={() => setShowAddSheet(false)}
             onDone={() => {
               loadFamilyAndMembers();
@@ -936,9 +944,8 @@ export default function Dashboard({ familyId }) {
             familyId={familyId}
             memberId={myMember.id}
             viewerId={myMember.id}
-            baseCurrency={family.base_currency}
             categories={categories}
-            members={members}
+            members={allMembers}
             amAdmin={amAdmin}
             onClose={() => setShowMyHistoryModal(false)}
           />
@@ -980,98 +987,15 @@ export default function Dashboard({ familyId }) {
           <AddActionSheet
             familyId={familyId}
             memberId={myMember.id}
-            baseCurrency={family.base_currency}
             categories={categories}
-            currentBalance={Number(myMember.balance || 0)}
-            onClose={() => setShowAddSheet(false)}
-            onDone={() => {
-              loadFamilyAndMembers();
-              loadTransactions();
-              loadMyRecentTransactions(myMember.id);
-            }}
-          />
-        )}
-      </div>
-    );
-  }
-
-  if (view === "me") {
-    return (
-      <div className="dashboard">
-        <header>
-          <div>
-            <h1>Me</h1>
-            <p className="subtitle">{myMember?.display_name}</p>
-          </div>
-          <div className="header-actions">
-            <ProfileMenuButton
-              myMember={myMember}
-              myRole={myRole}
-              amAdmin={amAdmin}
-              showSettings={amAdmin}
-              onOpenSettings={() => setView("settings")}
-              onSignOut={() => supabase.auth.signOut()}
-            />
-          </div>
-        </header>
-
-        <MeProfileCard
-          myMember={myMember}
-          session={session}
-          family={family}
-          myRole={myRole}
-          onSaved={loadFamilyAndMembers}
-        />
-
-        <section className="card">
-          <h2>My Transactions</h2>
-          <p className="hint">
-            Your full expense history, with filters by category, date, or note.
-          </p>
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => setShowMyHistoryModal(true)}
-          >
-            View My Transaction History
-          </button>
-        </section>
-
-        <button className="signout" onClick={() => supabase.auth.signOut()}>
-          Sign Out
-        </button>
-
-        <BottomNav
-          active="me"
-          onChange={handleNavChange}
-          onAddClick={() => setShowAddSheet(true)}
-        />
-        {showAddSheet && myMember && (
-          <AddActionSheet
-            familyId={familyId}
-            memberId={myMember.id}
-            baseCurrency={family.base_currency}
-            categories={categories}
-            currentBalance={Number(myMember.balance || 0)}
-            onClose={() => setShowAddSheet(false)}
-            onDone={() => {
-              loadFamilyAndMembers();
-              loadTransactions();
-              loadMyRecentTransactions(myMember.id);
-            }}
-          />
-        )}
-
-        {showMyHistoryModal && myMember && (
-          <TransactionHistoryModal
-            familyId={familyId}
-            memberId={myMember.id}
-            viewerId={myMember.id}
-            baseCurrency={family.base_currency}
-            categories={categories}
-            members={members}
+            accounts={accounts}
             amAdmin={amAdmin}
-            onClose={() => setShowMyHistoryModal(false)}
+            onClose={() => setShowAddSheet(false)}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
           />
         )}
       </div>
@@ -1083,7 +1007,7 @@ export default function Dashboard({ familyId }) {
       <header>
         <div>
           <h1>{family.name}</h1>
-          <p className="subtitle">Base currency: {family.base_currency}</p>
+          <p className="subtitle">Wallets in USD and LBP</p>
         </div>
         <div className="header-actions">
           {amAdmin && (
@@ -1107,27 +1031,25 @@ export default function Dashboard({ familyId }) {
         </div>
       </header>
 
-      <LimitWarningBanner spend={mySpend} baseCurrency={family.base_currency} />
+      <LimitWarningBanner spend={mySpend} />
 
       {myMember && (
         <section className="card">
-          <h2>My Balance</h2>
-          <p className="balance">
-            {Number(myMember.balance || 0).toFixed(2)} {family.base_currency}
-          </p>
+          <h2>My Wallets</h2>
+          <p className="balance">{fmtMoney(bal(myWallets.USD), "USD")}</p>
+          <p className="balance">{fmtMoney(bal(myWallets.LBP), "LBP")}</p>
           <p className="hint">
-            Your own share, moved out of the family balance. Spending draws from
-            this.
+            Your own money, taken from the family pool. Expenses draw from
+            these two wallets.
           </p>
         </section>
       )}
 
       {mySpend && (
         <section className="card">
-          <h2>My Balance This Period ({mySpend.period})</h2>
+          <h2>My Spending This Period ({mySpend.period})</h2>
           <p className="balance">
-            {mySpend.spent.toFixed(2)} / {mySpend.limit.toFixed(2)}{" "}
-            {family.base_currency}
+            {mySpend.spent.toFixed(2)} / {mySpend.limit.toFixed(2)} USD
           </p>
           <p className="hint">
             How much you've drawn from the family budget so far this period.
@@ -1141,7 +1063,6 @@ export default function Dashboard({ familyId }) {
           <PlannedPayments
             familyId={familyId}
             memberId={myMember.id}
-            baseCurrency={family.base_currency}
             categories={categories}
             payments={plannedPayments}
             onDone={() => {
@@ -1175,10 +1096,8 @@ export default function Dashboard({ familyId }) {
             <TransactionRow
               key={t.id}
               t={t}
-              familyId={familyId}
-              baseCurrency={family.base_currency}
               categories={categories}
-              members={members}
+              members={allMembers}
               canManage={t.member_id === myMember?.id || amAdmin}
               onChanged={() => {
                 loadTransactions();
@@ -1202,7 +1121,7 @@ export default function Dashboard({ familyId }) {
                 <div className="breakdown-row">
                   <span>{name}</span>
                   <span>
-                    {total.toFixed(2)} {family.base_currency}
+                    {total.toFixed(2)} USD
                   </span>
                 </div>
                 <div className="breakdown-bar-track">
@@ -1226,9 +1145,9 @@ export default function Dashboard({ familyId }) {
         <AddActionSheet
           familyId={familyId}
           memberId={myMember.id}
-          baseCurrency={family.base_currency}
           categories={categories}
-          currentBalance={Number(myMember.balance || 0)}
+          accounts={accounts}
+          amAdmin={amAdmin}
           onClose={() => setShowAddSheet(false)}
           onDone={() => {
             loadFamilyAndMembers();
@@ -1243,9 +1162,8 @@ export default function Dashboard({ familyId }) {
           familyId={familyId}
           memberId={myMember.id}
           viewerId={myMember.id}
-          baseCurrency={family.base_currency}
           categories={categories}
-          members={members}
+          members={allMembers}
           amAdmin={amAdmin}
           onClose={() => setShowMyHistoryModal(false)}
         />

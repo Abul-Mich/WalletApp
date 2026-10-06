@@ -25,6 +25,7 @@ export default function App() {
           .from('members')
           .select('family_id')
           .eq('user_id', session.user.id)
+          .is('removed_at', null)
           .limit(1)
           .maybeSingle()
         if (error) throw error
