@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { formatUsd, formatNumber2, formatTime, formatShortDate } from "../lib/format";
+
+const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Beirut" });
+const dayKey = (iso) => dayFmt.format(new Date(iso));
 
 // "Unread" is tracked client-side (localStorage, per family+user) rather
 // than server-side, since these are admin-only FYI notifications with no
@@ -57,35 +61,13 @@ export default function NotificationBell({
   }
 
   function formatNotificationTime(createdAt) {
-    const date = new Date(createdAt);
     const now = new Date();
-
-    const utcToday = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-    const utcCreated = Date.UTC(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate(),
+    const dayDiff = Math.round(
+      (new Date(dayKey(now.toISOString())) - new Date(dayKey(createdAt))) / 86400000,
     );
-    const diffDays = Math.round(
-      (utcToday - utcCreated) / (1000 * 60 * 60 * 24),
-    );
-
-    if (diffDays === 0) {
-      return date.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    }
-    if (diffDays === 1) {
-      return "yesterday";
-    }
-
-    const hasSameYear = date.getFullYear() === now.getFullYear();
-    return date.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      ...(hasSameYear ? {} : { year: "numeric" }),
-    });
+    if (dayDiff === 0) return formatTime(createdAt);
+    if (dayDiff === 1) return "yesterday";
+    return formatShortDate(createdAt);
   }
 
   return (
@@ -131,22 +113,22 @@ export default function NotificationBell({
                   <strong>{memberName(n.member_id)}</strong>{" "}
                   {n.type === "member_return" && (
                     <>
-                      returned {Number(Math.abs(n.amount)).toFixed(2)} to the
-                      family balance
+                      returned {formatNumber2(Math.abs(n.amount))} to the
+                      family pool
                     </>
                   )}
                   {n.type === "member_topup" && (
-                    <>added {Number(n.amount).toFixed(2)} to their balance</>
+                    <>took {formatNumber2(n.amount)} from the pool</>
                   )}
                   {n.type === "card_topup" && (
                     <>
                       topped up {cardName(n.card_id)} by{" "}
-                      {Number(n.amount).toFixed(2)}
+                      {formatNumber2(n.amount)}
                     </>
                   )}
                   {n.type === "card_withdraw" && (
                     <>
-                      spent {Number(n.amount).toFixed(2)} from{" "}
+                      spent {formatUsd(n.amount)} from{" "}
                       {cardName(n.card_id)}
                     </>
                   )}

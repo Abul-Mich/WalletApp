@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { setMemberLimit, setRole, removeMember as removeMemberRpc } from "../lib/wallets";
+import { formatUsd } from "../lib/format";
 
 export default function AdminSettings({
   familyId,
@@ -263,7 +264,7 @@ export default function AdminSettings({
             <option value="monthly">monthly</option>
           </select>
           <span className="limit-currency">USD</span>
-          <button type="submit" disabled={busy}>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
             Save
           </button>
         </form>
@@ -292,8 +293,7 @@ export default function AdminSettings({
                     <div className="breakdown-row">
                       <span>{m.display_name}</span>
                       <span>
-                        {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)}{" "}
-                        USD ({spend.period})
+                        {formatUsd(spend.spent)} / {formatUsd(spend.limit)} ({spend.period})
                       </span>
                     </div>
                     <div className="breakdown-bar-track">
@@ -445,7 +445,7 @@ export default function AdminSettings({
             value={newCategory}
             onChange={(e) => setNewCategory(e.target.value)}
           />
-          <button type="submit" disabled={busy}>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
             Add Category
           </button>
         </form>

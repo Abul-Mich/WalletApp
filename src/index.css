@@ -1680,3 +1680,101 @@ button.link-btn:hover {
   color: #f59e0b;
   font-weight: 600;
 }
+
+/* ===================================================================
+   UI system v2: one button set, one form-field pattern
+   Buttons: .btn + .btn-primary | .btn-secondary | .btn-ghost | .btn-danger
+   Sizes:   default 44px, .btn-sm 36px, .btn-block full width
+   Old class names are mapped onto these so screens migrate gradually.
+   =================================================================== */
+.btn,
+.remove-btn,
+.link-button,
+.load-more,
+.signout,
+.txn-actions button,
+.sheet-close {
+  min-height: 36px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.btn-sm { min-height: 36px; padding: 0 12px; font-size: 13px; }
+.btn-block { width: 100%; }
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { background: var(--accent-bright); }
+.btn-secondary { background: var(--surface-raised); border-color: var(--border); color: var(--text); }
+.btn-secondary:hover { background: var(--surface-hover); }
+.btn-ghost { background: transparent; color: var(--accent-bright); }
+.btn-ghost:hover { background: rgba(91, 141, 239, 0.12); }
+.btn-danger { background: transparent; color: var(--danger); }
+.btn-danger:hover { background: rgba(239, 106, 95, 0.12); }
+.btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+
+/* old names -> new look */
+.link-button,
+.link-btn {
+  background: transparent;
+  color: var(--accent-bright);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+.link-button:hover,
+.link-btn:hover { background: rgba(91, 141, 239, 0.12); color: var(--accent-bright); }
+.remove-btn { font-size: 13px; font-weight: 600; padding: 0 12px; }
+.txn-actions button { padding: 0 12px; font-size: 13px; font-weight: 600; background: var(--surface-raised); border: 1px solid var(--border); }
+.load-more { min-height: 44px; font-size: 14px; }
+.signout { min-height: 44px; }
+
+/* form fields */
+.form-stack { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field > label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.field .help, .help { font-size: 12px; color: var(--text-faint); }
+.input { position: relative; }
+.input input,
+.input select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.input .unit {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.input.has-unit input { padding-right: 58px; text-align: right; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 420px) { .grid { grid-template-columns: 1fr; } }
+.group { border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 12px; }
+.group h4 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.net-line { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px; border-radius: var(--radius-md); background: var(--surface-raised); }
+.net-line span { color: var(--text-muted); font-size: 13px; }
+.net-line strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.form-actions .btn { flex: 1; }
+.txn-amount, .balance, .balance-inline, .summary-value { font-variant-numeric: tabular-nums; }

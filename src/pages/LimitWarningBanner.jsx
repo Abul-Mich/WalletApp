@@ -1,3 +1,4 @@
+import { formatUsd, formatPercent } from '../lib/format'
 export default function LimitWarningBanner({ spend }) {
   if (!spend || (!spend.isNearLimit && !spend.isOverLimit)) return null
 
@@ -5,13 +6,12 @@ export default function LimitWarningBanner({ spend }) {
     <div className={`limit-banner ${spend.isOverLimit ? 'over' : 'near'}`}>
       {spend.isOverLimit ? (
         <>
-          You're over your {spend.period} limit: {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)}{' '}
-          USD
+          You're over your {spend.period} limit: {formatUsd(spend.spent)} / {formatUsd(spend.limit)}
         </>
       ) : (
         <>
-          Heads up — you've used {(spend.percentUsed * 100).toFixed(0)}% of your {spend.period} limit (
-          {spend.spent.toFixed(2)} / {spend.limit.toFixed(2)} USD)
+          Heads up — you've used {formatPercent(spend.percentUsed)} of your {spend.period} limit (
+          {formatUsd(spend.spent)} / {formatUsd(spend.limit)})
         </>
       )}
     </div>

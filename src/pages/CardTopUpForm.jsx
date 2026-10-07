@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { createTransfer, fmtMoney } from "../lib/wallets";
+import { createTransfer } from "../lib/wallets";
+import { formatMoney, parseNumber } from "../lib/format";
+import { MoneyInput, SelectInput } from "../components/Field";
 
 // Moves money from the family pool onto a shared prepaid card (same currency
 // as the card). Any member can do this; the database refuses if the pool
-// does not have enough.
+// does not have enough. The tag is an optional label with no effect on limits.
 export default function CardTopUpForm({ cardAccount, poolAccounts, members, onDone }) {
-  const [tag, setTag] = useState("");
   const [amount, setAmount] = useState("");
+  const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const cur = cardAccount.currency;
@@ -14,10 +16,12 @@ export default function CardTopUpForm({ cardAccount, poolAccounts, members, onDo
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const n = parseNumber(amount);
+    if (!(n > 0)) return setError("Enter an amount.");
     setBusy(true);
     setError(null);
     try {
-      await createTransfer({ from: pool.id, to: cardAccount.id, amount: parseFloat(amount), taggedMemberId: tag || null });
+      await createTransfer({ from: pool.id, to: cardAccount.id, amount: n, taggedMemberId: tag || null });
       setAmount("");
       onDone?.();
     } catch (err) {
@@ -28,16 +32,16 @@ export default function CardTopUpForm({ cardAccount, poolAccounts, members, onDo
   }
 
   return (
-    <form onSubmit={handleSubmit} className="inline-form">
-      <p className="hint">
-        Family pool: {fmtMoney(pool?.balance_cache, cur)} · this card holds {cur}
-      </p>
-      <input type="number" step="any" min="0" placeholder={`Amount (${cur})`} value={amount} onChange={(e) => setAmount(e.target.value)} required />
-      <select value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Tag a family member (optional)">
-        <option value="">No tag (optional)</option>
-        {(members || []).map((m) => (<option key={m.id} value={m.id}>For {m.display_name}</option>))}
-      </select>
-      <button type="submit" disabled={busy || !pool}>{busy ? "Adding..." : "Top Up Card"}</button>
+    <form onSubmit={handleSubmit} className="form-stack">
+      <p className="hint">Family pool has {formatMoney(pool?.balance_cache, cur)}. This card holds {cur}.</p>
+      <MoneyInput label="Amount" unit={cur} value={amount} onChange={setAmount} placeholder="0" required autoFocus />
+      <SelectInput label="For (optional)" value={tag} onChange={setTag} help="A label only. It does not change anyone's limit.">
+        <option value="">No one in particular</option>
+        {(members || []).map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
+      </SelectInput>
+      <button type="submit" className="btn btn-primary btn-block" disabled={busy || !pool}>
+        {busy ? "Adding..." : "Top up card"}
+      </button>
       {error && <p className="status error">{error}</p>}
     </form>
   );
