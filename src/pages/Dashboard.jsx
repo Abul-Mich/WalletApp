@@ -18,9 +18,10 @@ import BalanceTransfersAdmin from "./BalanceTransfersAdmin";
 import FamilyBalanceCard from "./FamilyBalanceCard";
 import FamilyBalanceHistoryAdmin from "./FamilyBalanceHistoryAdmin";
 import Statistics from "./Statistics";
-import { getMemberSpend, loadAccounts, groupAccounts, latestLbpRate, createInvite, fmtMoney, bal } from "../lib/wallets";
+import { getMemberSpend, loadAccounts, groupAccounts, latestLbpRate, createInvite, bal } from "../lib/wallets";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
+import { formatUsd, formatLbp, formatTime } from "../lib/format";
 
 const PAGE_SIZE = 20; // FR13 — load 20 at a time, not the full history
 const ACTIVITY_LIMIT = 10;
@@ -449,10 +450,7 @@ export default function Dashboard({ familyId }) {
                   amount: row.net_usd ?? row.amount,
                   currency: row.net_usd != null ? "USD" : row.currency,
                   categoryName: category?.name ?? null,
-                  timeLabel: new Date(row.created_at).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  }),
+                  timeLabel: formatTime(row.created_at),
                 },
                 ...prev,
               ].slice(0, ACTIVITY_LIMIT),
@@ -586,7 +584,7 @@ export default function Dashboard({ familyId }) {
         </header>
 
         <section className="card">
-          <h2>Exchange Rate</h2>
+          <h2>Exchange rate</h2>
           <p className="hint">
             For informal/parallel-market currencies (e.g. LBP). Enter one
             direction — the reverse rate is derived and stored automatically.
@@ -600,7 +598,7 @@ export default function Dashboard({ familyId }) {
         </section>
 
         <section className="card">
-          <h2>Budgets &amp; Limits</h2>
+          <h2>Budgets &amp; limits</h2>
           <AdminSettings
             familyId={familyId}
             family={family}
@@ -617,7 +615,7 @@ export default function Dashboard({ familyId }) {
         </section>
 
         <section className="card">
-          <h2>Money Movements</h2>
+          <h2>Money movements</h2>
           <p className="hint">
             Every transfer between the pool, members and cards, and every
             exchange. Fix a mistake by deleting it and entering it again.
@@ -636,7 +634,7 @@ export default function Dashboard({ familyId }) {
         </section>
 
         <section className="card">
-          <h2>Family Balance History</h2>
+          <h2>Family balance history</h2>
           <p className="hint">
             Every deposit into the family pool. Admins can delete a deposit that
             was entered by mistake.
@@ -713,8 +711,7 @@ export default function Dashboard({ familyId }) {
             <div className="breakdown-row">
               <span>Used</span>
               <span>
-                {familyBudgetSpend.spent.toFixed(2)} /{" "}
-                {familyBudgetSpend.limit.toFixed(2)} USD
+                {formatUsd(familyBudgetSpend.spent)} / {formatUsd(familyBudgetSpend.limit)}
               </span>
             </div>
             <div className="breakdown-bar-track">
@@ -745,8 +742,8 @@ export default function Dashboard({ familyId }) {
                 <span>{m.display_name}</span>
                 <span className="member-list-right">
                   <span className="member-balance">
-                    {fmtMoney(bal(accounts.members[m.id]?.USD), "USD")} ·{" "}
-                    {fmtMoney(bal(accounts.members[m.id]?.LBP), "LBP")}
+                    {formatUsd(bal(accounts.members[m.id]?.USD))} ·{" "}
+                    {formatLbp(bal(accounts.members[m.id]?.LBP))}
                   </span>
                   <span className={`badge ${m.role}`}>{m.role}</span>
                 </span>
@@ -757,7 +754,7 @@ export default function Dashboard({ familyId }) {
 
         {amAdmin && invite && (
           <section className="card">
-            <h2>Invite Code</h2>
+            <h2>Invite code</h2>
             <p className="invite-code">{invite.code}</p>
             <p className="hint">
               Share this with family members so they can join. A code works once.
@@ -767,7 +764,7 @@ export default function Dashboard({ familyId }) {
         )}
         {amAdmin && !invite && (
           <section className="card">
-            <h2>Invite Code</h2>
+            <h2>Invite code</h2>
             <button type="button" onClick={newInvite}>Create invite code</button>
           </section>
         )}
@@ -788,7 +785,7 @@ export default function Dashboard({ familyId }) {
 
         {amAdmin && (
           <section className="card">
-            <h2>Add Funds</h2>
+            <h2>Add funds</h2>
             <DepositForm
               familyId={familyId}
               accounts={accounts}
@@ -799,7 +796,7 @@ export default function Dashboard({ familyId }) {
 
         <section className="card">
           <div className="card-header-row">
-            <h2>Records</h2>
+            <h2>Family expenses</h2>
             {transactions.length > 0 && (
               <button
                 type="button"
@@ -844,7 +841,7 @@ export default function Dashboard({ familyId }) {
         )}
 
         <section className="card">
-          <h2>Recent Activity</h2>
+          <h2>Recent activity</h2>
           <ActivityFeed events={activity} />
         </section>
 
@@ -901,7 +898,7 @@ export default function Dashboard({ familyId }) {
         />
 
         <section className="card">
-          <h2>My Transactions</h2>
+          <h2>My transactions</h2>
           <p className="hint">
             Your full expense history, with filters by category, date, or note.
           </p>
@@ -1035,9 +1032,9 @@ export default function Dashboard({ familyId }) {
 
       {myMember && (
         <section className="card">
-          <h2>My Wallets</h2>
-          <p className="balance">{fmtMoney(bal(myWallets.USD), "USD")}</p>
-          <p className="balance">{fmtMoney(bal(myWallets.LBP), "LBP")}</p>
+          <h2>My wallets</h2>
+          <p className="balance">{formatUsd(bal(myWallets.USD))}</p>
+          <p className="balance">{formatLbp(bal(myWallets.LBP))}</p>
           <p className="hint">
             Your own money, taken from the family pool. Expenses draw from
             these two wallets.
@@ -1047,9 +1044,9 @@ export default function Dashboard({ familyId }) {
 
       {mySpend && (
         <section className="card">
-          <h2>My Spending This Period ({mySpend.period})</h2>
+          <h2>My spending this period ({mySpend.period})</h2>
           <p className="balance">
-            {mySpend.spent.toFixed(2)} / {mySpend.limit.toFixed(2)} USD
+            {formatUsd(mySpend.spent)} / {formatUsd(mySpend.limit)}
           </p>
           <p className="hint">
             How much you've drawn from the family budget so far this period.
@@ -1059,7 +1056,7 @@ export default function Dashboard({ familyId }) {
 
       {myMember && categories.length > 0 && (
         <section className="card">
-          <h2>Upcoming Bills</h2>
+          <h2>Upcoming bills</h2>
           <PlannedPayments
             familyId={familyId}
             memberId={myMember.id}
@@ -1077,7 +1074,7 @@ export default function Dashboard({ familyId }) {
 
       <section className="card">
         <div className="card-header-row">
-          <h2>Last Records</h2>
+          <h2>Recent expenses</h2>
           {myRecentTransactions.length > 0 && (
             <button
               type="button"
@@ -1111,7 +1108,7 @@ export default function Dashboard({ familyId }) {
       </section>
 
       <section className="card">
-        <h2>Category Breakdown</h2>
+        <h2>Category breakdown</h2>
         {breakdown.length === 0 && <p className="hint">No spending yet.</p>}
         <ul className="breakdown-list">
           {breakdown.map(([name, total]) => {
@@ -1121,7 +1118,7 @@ export default function Dashboard({ familyId }) {
                 <div className="breakdown-row">
                   <span>{name}</span>
                   <span>
-                    {total.toFixed(2)} USD
+                    {formatUsd(total)}
                   </span>
                 </div>
                 <div className="breakdown-bar-track">

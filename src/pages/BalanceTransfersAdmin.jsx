@@ -90,7 +90,7 @@ export default function BalanceTransfersAdmin({ familyId, rawAccounts, members, 
       </ul>
       {hasMore && (
         <button type="button" className="load-more" disabled={loading} onClick={() => setLimit((l) => l + PAGE_SIZE)}>
-          {loading ? "Loading..." : "Load 20 More"}
+          {loading ? "Loading..." : "Load 20 more"}
         </button>
       )}
     </div>

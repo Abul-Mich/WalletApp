@@ -3,6 +3,11 @@ import { supabase } from "../supabaseClient";
 import { useAuth } from "../AuthContext";
 import { isAdmin } from "../lib/roles";
 import { loadAccounts, latestLbpRate, bal } from "../lib/wallets";
+import { formatUsd, formatShortDate, formatDate } from "../lib/format";
+
+// Calendar day in Beirut, as sortable text (2026-10-07)
+const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Beirut" });
+const dayKey = (iso) => dayFmt.format(new Date(iso));
 import {
   LineChart,
   Line,
@@ -218,19 +223,16 @@ export default function Statistics({ familyId }) {
     // 1. Spending Trend (daily)
     const dailySpend = {};
     transactions.forEach((txn) => {
-      const date = new Date(txn.created_at).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
-      dailySpend[date] = (dailySpend[date] || 0) + usd(txn);
+      const key = dayKey(txn.created_at);
+      dailySpend[key] = (dailySpend[key] || 0) + usd(txn);
     });
 
     const trend = Object.entries(dailySpend)
-      .map(([date, amount]) => ({
-        date,
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([key, amount]) => ({
+        date: formatShortDate(`${key}T12:00:00+03:00`),
         amount: parseFloat(amount.toFixed(2)),
-      }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
+      }));
     setSpendingTrend(trend);
 
     // 2. Category Breakdown
@@ -371,21 +373,21 @@ export default function Statistics({ familyId }) {
       <div className="stats-summary-cards">
         <div className="summary-card">
           <div className="summary-label">Total Spent</div>
-          <div className="summary-value">${cashFlowMetrics.totalSpent}</div>
+          <div className="summary-value">{formatUsd(cashFlowMetrics.totalSpent)}</div>
           <div className="summary-meta">{transactions.length} transactions</div>
         </div>
 
         <div className="summary-card">
           <div className="summary-label">Family Money (USD)</div>
           <div className="summary-value">
-            ${(wallet?.balance_cache || 0).toFixed(2)}
+            {formatUsd(wallet?.balance_cache || 0)}
           </div>
           <div className="summary-meta">Current balance</div>
         </div>
 
         <div className="summary-card">
           <div className="summary-label">Avg Daily Spend</div>
-          <div className="summary-value">${cashFlowMetrics.avgDailySpend}</div>
+          <div className="summary-value">{formatUsd(cashFlowMetrics.avgDailySpend)}</div>
           <div className="summary-meta">Average per day</div>
         </div>
 
@@ -394,8 +396,8 @@ export default function Statistics({ familyId }) {
           <div
             className={`summary-value ${cashFlowMetrics.netChange >= 0 ? "positive" : "negative"}`}
           >
-            {cashFlowMetrics.netChange >= 0 ? "+" : ""}$
-            {cashFlowMetrics.netChange.toFixed(2)}
+            {cashFlowMetrics.netChange >= 0 ? "+" : ""}
+            {formatUsd(cashFlowMetrics.netChange)}
           </div>
           <div className="summary-meta">Period change</div>
         </div>
@@ -410,8 +412,9 @@ export default function Statistics({ familyId }) {
             <LineChart data={spendingTrend}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="date" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" />
+              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
               <Tooltip
+                formatter={(v) => formatUsd(v)}
                 contentStyle={{
                   backgroundColor: "var(--surface-raised)",
                   border: `1px solid var(--border)`,
@@ -431,7 +434,7 @@ export default function Statistics({ familyId }) {
           </ResponsiveContainer>
         </div>
 
-        {/* Category Breakdown */}
+        {/* Category breakdown */}
         <div className="chart-card">
           <h3>Spending by Category</h3>
           <ResponsiveContainer width="100%" height={chartHeight}>
@@ -443,7 +446,7 @@ export default function Statistics({ familyId }) {
                 labelLine={false}
                 label={
                   window.innerWidth > 768
-                    ? ({ name, value }) => `${name}: $${value}`
+                    ? ({ name, value }) => `${name}: ${formatUsd(value)}`
                     : false
                 }
                 outerRadius={pieRadius}
@@ -466,7 +469,7 @@ export default function Statistics({ familyId }) {
                 }}
                 labelStyle={{ color: "var(--text)" }}
                 formatter={(value, name, props) => [
-                  `$${value}`,
+                  formatUsd(value),
                   props.payload.name,
                 ]}
               />
@@ -482,7 +485,7 @@ export default function Statistics({ familyId }) {
                       style={{ backgroundColor: COLORS[idx % COLORS.length] }}
                     />
                     <span className="legend-label">
-                      {item.name}: ${item.value}
+                      {item.name}: {formatUsd(item.value)}
                     </span>
                   </div>
                 ))}
@@ -499,8 +502,9 @@ export default function Statistics({ familyId }) {
               <BarChart data={memberComparison}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="name" stroke="var(--text-muted)" />
-                <YAxis stroke="var(--text-muted)" />
+                <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
                 <Tooltip
+                formatter={(v) => formatUsd(v)}
                   contentStyle={{
                     backgroundColor: "var(--surface-raised)",
                     border: `1px solid var(--border)`,
@@ -524,10 +528,10 @@ export default function Statistics({ familyId }) {
           <div className="balance-info">
             <div>
               Current Balance:{" "}
-              <strong>${(wallet?.balance_cache || 0).toFixed(2)}</strong>
+              <strong>{formatUsd(wallet?.balance_cache || 0)}</strong>
             </div>
             <div>
-              Period: {start.toLocaleDateString()} — {end.toLocaleDateString()}
+              Period: {formatDate(start)} — {formatDate(end)}
             </div>
           </div>
         </div>

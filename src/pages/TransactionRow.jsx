@@ -1,9 +1,13 @@
 import { useState } from "react";
 import { supabase } from "../supabaseClient";
-import {
-  buildLegs, netUsd, updateExpense, deleteExpense, deleteCardSpend,
-  fmtMoney, fmtWhen,
-} from "../lib/wallets";
+import { buildLegs, netUsd, updateExpense, deleteExpense, deleteCardSpend } from "../lib/wallets";
+import { formatUsd, formatMoney, formatDateTime, parseNumber } from "../lib/format";
+import { MoneyInput, TextInput, SelectInput, FormGroup } from "../components/Field";
+
+const num = (v) => {
+  const n = parseNumber(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
 
 function toLocalInput(iso) {
   const d = new Date(iso);
@@ -60,20 +64,20 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
     }
   }
 
-  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const setField = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
 
   async function save() {
     setBusy(true);
     setError(null);
     try {
       const legs = buildLegs({
-        paidUsd: parseFloat(f.paidUsd) || 0,
-        paidLbp: parseFloat(f.paidLbp) || 0,
-        changeUsd: parseFloat(f.changeUsd) || 0,
-        changeLbp: parseFloat(f.changeLbp) || 0,
+        paidUsd: num(f.paidUsd),
+        paidLbp: num(f.paidLbp),
+        changeUsd: num(f.changeUsd),
+        changeLbp: num(f.changeLbp),
       });
       const usesLbp = legs.some((l) => l.currency === "LBP");
-      const rate = parseFloat(f.rate) || 0;
+      const rate = num(f.rate);
       if (legs.length === 0) throw new Error("Enter an amount.");
       if (usesLbp && !rate) throw new Error("Enter the LBP rate.");
       if (netUsd(legs, rate) <= 0) throw new Error("The net spend must be greater than zero.");
@@ -114,19 +118,27 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
   if (editing && f) {
     return (
       <li className="txn-edit">
-        <div className="inline-form">
-          <input type="number" step="any" min="0" placeholder="Paid USD" value={f.paidUsd} onChange={set("paidUsd")} />
-          <input type="number" step="any" min="0" placeholder="Paid LBP" value={f.paidLbp} onChange={set("paidLbp")} />
-          <input type="number" step="any" min="0" placeholder="Change USD" value={f.changeUsd} onChange={set("changeUsd")} />
-          <input type="number" step="any" min="0" placeholder="Change LBP" value={f.changeLbp} onChange={set("changeLbp")} />
-          <input type="number" step="any" min="0" placeholder="LBP per 1 USD" value={f.rate} onChange={set("rate")} />
-          <select value={f.categoryId} onChange={set("categoryId")}>
-            {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-          </select>
-          <input placeholder="Note" value={f.note} onChange={set("note")} />
-          <input type="datetime-local" value={f.when} onChange={set("when")} />
-          <button type="button" disabled={busy} onClick={save}>{busy ? "Saving..." : "Save"}</button>
-          <button type="button" className="remove-btn" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+        <div className="form-stack">
+          <FormGroup title="You paid">
+            <MoneyInput label="US dollars" unit="USD" value={f.paidUsd} onChange={setField("paidUsd")} placeholder="0" />
+            <MoneyInput label="Lebanese pounds" unit="LBP" value={f.paidLbp} onChange={setField("paidLbp")} placeholder="0" />
+          </FormGroup>
+          <FormGroup title="Change you got back">
+            <MoneyInput label="US dollars" unit="USD" value={f.changeUsd} onChange={setField("changeUsd")} placeholder="0" />
+            <MoneyInput label="Lebanese pounds" unit="LBP" value={f.changeLbp} onChange={setField("changeLbp")} placeholder="0" />
+          </FormGroup>
+          <MoneyInput label="Exchange rate" unit="LBP/USD" value={f.rate} onChange={setField("rate")} placeholder="89,500" help="Needed only when LBP is involved" />
+          <div className="grid">
+            <SelectInput label="Category" value={f.categoryId} onChange={setField("categoryId")}>
+              {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+            </SelectInput>
+            <TextInput label="Date and time" type="datetime-local" value={f.when} onChange={setField("when")} />
+          </div>
+          <TextInput label="Note" value={f.note} onChange={setField("note")} />
+          <div className="form-actions">
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving..." : "Save"}</button>
+            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+          </div>
         </div>
         {error && <p className="status error">{error}</p>}
       </li>
@@ -137,12 +149,12 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
     <li>
       <div>
         <span className="txn-amount">
-          -{net.toFixed(2)} USD
+          {formatUsd(-net)}
           {t.currency && t.currency !== "USD" && (
-            <span className="txn-converted"> ({fmtMoney(t.amount, t.currency)})</span>
+            <span className="txn-converted"> ({formatMoney(t.amount, t.currency)})</span>
           )}
         </span>
-        <span className="txn-meta">{categoryName} · {memberName} · {fmtWhen(t.created_at)}</span>
+        <span className="txn-meta">{categoryName} · {memberName} · {formatDateTime(t.created_at)}</span>
       </div>
       {t.note && <p className="txn-note">{t.note}</p>}
       {canManage && (

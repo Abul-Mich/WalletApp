@@ -40,7 +40,7 @@ export default function CardsSection({
         <h2>Cards</h2>
         {amAdmin && (
           <button type="button" className="link-button" onClick={() => setShowNewCard((v) => !v)}>
-            {showNewCard ? "Cancel" : "New Card"}
+            {showNewCard ? "Cancel" : "New card"}
           </button>
         )}
       </div>
@@ -52,7 +52,7 @@ export default function CardsSection({
             <option value="USD">USD card</option>
             <option value="LBP">LBP card</option>
           </select>
-          <button type="submit" disabled={busy}>{busy ? "Creating..." : "Create Card"}</button>
+          <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Creating..." : "Create card"}</button>
           {error && <p className="status error">{error}</p>}
         </form>
       )}

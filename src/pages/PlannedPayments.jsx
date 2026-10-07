@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getExchangeRate } from '../lib/exchangeRates'
 import { createExpense, latestLbpRate } from '../lib/wallets'
+import { formatMoney } from '../lib/format'
 
 const BILL_CURRENCIES = ['USD', 'LBP']
 
@@ -151,7 +152,7 @@ export default function PlannedPayments({
                   </span>
                 </span>
                 <span>
-                  {Number(p.amount).toFixed(2)} {p.currency}
+                  {formatMoney(p.amount, p.currency)}
                 </span>
               </div>
               <div className="bill-meta">
@@ -219,8 +220,8 @@ export default function PlannedPayments({
           <option value="one_time">One-time</option>
         </select>
         <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />
-        <button type="submit" disabled={busy}>
-          {busy ? 'Adding...' : 'Add Bill'}
+        <button type="submit" className="btn btn-primary" disabled={busy}>
+          {busy ? 'Adding...' : 'Add bill'}
         </button>
         {error && <p className="status error">{error}</p>}
       </form>

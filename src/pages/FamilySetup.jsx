@@ -73,8 +73,8 @@ export default function FamilySetup({ onFamilyReady }) {
             onChange={(e) => setDisplayName(e.target.value)}
             required
           />
-          <button type="submit" disabled={busy}>
-            {busy ? 'Creating...' : 'Create Family (become Superadmin)'}
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? 'Creating...' : 'Create family (you become superadmin)'}
           </button>
         </form>
       ) : (
@@ -91,8 +91,8 @@ export default function FamilySetup({ onFamilyReady }) {
             onChange={(e) => setDisplayName(e.target.value)}
             required
           />
-          <button type="submit" disabled={busy}>
-            {busy ? 'Joining...' : 'Join Family'}
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? 'Joining...' : 'Join family'}
           </button>
         </form>
       )}

@@ -133,7 +133,7 @@ export default function CardDetailModal({
         <div className="sheet-tabs">
           {!card.archived && (
             <>
-              <button type="button" className={`sheet-tab ${tab === "topup" ? "active" : ""}`} onClick={() => setTab("topup")}>Top Up</button>
+              <button type="button" className={`sheet-tab ${tab === "topup" ? "active" : ""}`} onClick={() => setTab("topup")}>Top up</button>
               <button type="button" className={`sheet-tab ${tab === "withdraw" ? "active" : ""}`} onClick={() => setTab("withdraw")}>Spend</button>
             </>
           )}
@@ -178,7 +178,7 @@ export default function CardDetailModal({
               </ul>
               {hasMore && (
                 <button type="button" className="load-more" disabled={loading} onClick={() => setLimit((l) => l + PAGE_SIZE)}>
-                  {loading ? "Loading..." : "Load 20 More"}
+                  {loading ? "Loading..." : "Load 20 more"}
                 </button>
               )}
             </>

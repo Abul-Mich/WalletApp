@@ -127,7 +127,7 @@ export default function TransactionHistoryModal({
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-handle" />
         <div className="sheet-header">
-          <h2>{memberId ? "My Transactions" : "Family Transactions"}</h2>
+          <h2>{memberId ? "My transactions" : "Family transactions"}</h2>
           <button
             type="button"
             className="sheet-close"
@@ -241,7 +241,7 @@ export default function TransactionHistoryModal({
               disabled={loadingMore}
               onClick={() => load(false)}
             >
-              {loadingMore ? "Loading..." : "Load 20 More"}
+              {loadingMore ? "Loading..." : "Load 20 more"}
             </button>
           )}
         </div>

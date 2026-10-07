@@ -1,7 +1,8 @@
-import { bal, fmtMoney, totalUsd } from "../lib/wallets";
+import { bal, totalUsd } from "../lib/wallets";
+import { formatUsd, formatLbp, formatRate } from "../lib/format";
 
-// Shows the family pool (unallocated money) in both currencies, plus the
-// whole family's money (pool + members + cards) in USD at the current rate.
+// Shows the family pool (money not yet taken by anyone) in both currencies,
+// plus the whole family's money (pool + members + cards) in USD at the family rate.
 export default function FamilyBalanceCard({ accounts, rate }) {
   const pool = accounts.pool;
   const members = Object.values(accounts.members);
@@ -14,14 +15,14 @@ export default function FamilyBalanceCard({ accounts, rate }) {
 
   return (
     <section className="card">
-      <div className="card-header-row"><h2>Family Pool</h2></div>
-      <p className="balance">{fmtMoney(bal(pool.USD), "USD")}</p>
-      <p className="balance">{fmtMoney(bal(pool.LBP), "LBP")}</p>
+      <div className="card-header-row"><h2>Family pool</h2></div>
+      <p className="balance">{formatUsd(bal(pool.USD))}</p>
+      <p className="balance">{formatLbp(bal(pool.LBP))}</p>
       <p className="hint">Money not yet taken by any member or card.</p>
       {rate > 0 && (
         <p className="hint">
-          Whole family: {(poolUsd + membersUsd + cardsUsd).toFixed(2)} USD
-          (pool {poolUsd.toFixed(2)} · members {membersUsd.toFixed(2)} · cards {cardsUsd.toFixed(2)}) at {Math.round(rate).toLocaleString()} LBP per USD.
+          Whole family: {formatUsd(poolUsd + membersUsd + cardsUsd)}
+          {" "}(pool {formatUsd(poolUsd)} · members {formatUsd(membersUsd)} · cards {formatUsd(cardsUsd)}) at {formatRate(rate)}.
         </p>
       )}
     </section>

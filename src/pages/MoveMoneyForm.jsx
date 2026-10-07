@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { createTransfer, fmtMoney } from "../lib/wallets";
+import { createTransfer } from "../lib/wallets";
+import { formatMoney, parseNumber } from "../lib/format";
+import { MoneyInput, SelectInput } from "../components/Field";
 
 // Moves money between the family pool and the caller's own wallet, in either
 // direction. direction="in": pool -> my wallet. direction="out": my wallet -> pool.
@@ -16,10 +18,12 @@ export default function MoveMoneyForm({ direction, memberId, accounts, onDone })
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const n = parseNumber(amount);
+    if (!(n > 0)) return setError("Enter an amount.");
     setBusy(true);
     setError(null);
     try {
-      await createTransfer({ from: from.id, to: to.id, amount: parseFloat(amount) });
+      await createTransfer({ from: from.id, to: to.id, amount: n });
       setAmount("");
       onDone?.();
     } catch (err) {
@@ -30,17 +34,19 @@ export default function MoveMoneyForm({ direction, memberId, accounts, onDone })
   }
 
   return (
-    <form onSubmit={handleSubmit} className="inline-form">
+    <form onSubmit={handleSubmit} className="form-stack">
       <p className="hint">
-        {direction === "in" ? "Family pool" : "My wallet"} has {fmtMoney(from?.balance_cache, currency)}
+        {direction === "in" ? "Family pool" : "Your wallet"} has {formatMoney(from?.balance_cache, currency)}
       </p>
-      <input type="number" step="any" min="0" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-      <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-        <option value="USD">USD</option>
-        <option value="LBP">LBP</option>
-      </select>
-      <button type="submit" disabled={busy || !from || !to}>
-        {busy ? "Moving..." : direction === "in" ? "Add to My Wallet" : "Return to Family Pool"}
+      <div className="grid">
+        <MoneyInput label="Amount" unit={currency} value={amount} onChange={setAmount} placeholder="0" required autoFocus />
+        <SelectInput label="Currency" value={currency} onChange={setCurrency}>
+          <option value="USD">US dollars (USD)</option>
+          <option value="LBP">Lebanese pounds (LBP)</option>
+        </SelectInput>
+      </div>
+      <button type="submit" className="btn btn-primary btn-block" disabled={busy || !from || !to}>
+        {busy ? "Moving..." : direction === "in" ? "Take from pool" : "Return to pool"}
       </button>
       {error && <p className="status error">{error}</p>}
     </form>
