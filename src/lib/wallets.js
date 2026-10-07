@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { formatMoney, formatDateTime } from "./format";
 
 // Data layer for the two-wallet ledger (migrations 0001-0004).
 // All money changes go through SQL functions (supabase.rpc); the browser
@@ -55,18 +56,9 @@ export function groupAccounts(accounts) {
   return out;
 }
 
-export function fmtMoney(n, currency) {
-  const v = Number(n || 0);
-  return currency === "LBP"
-    ? `${Math.round(v).toLocaleString()} LBP`
-    : `${v.toFixed(2)} ${currency || "USD"}`;
-}
-
-export function fmtWhen(iso) {
-  return new Date(iso).toLocaleString([], {
-    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-  });
-}
+// Kept for older imports; see lib/format.js for the rules.
+export const fmtMoney = formatMoney;
+export const fmtWhen = formatDateTime;
 
 export function bal(acct) {
   return acct ? Number(acct.balance_cache || 0) : 0;
