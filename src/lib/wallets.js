@@ -227,3 +227,39 @@ export const setMemberLimit = ({ memberId, amount, period }) =>
 export const setRole = ({ memberId, role }) =>
   call("set_role", { p_member_id: memberId, p_role: role });
 export const removeMember = (memberId) => call("remove_member", { p_member_id: memberId });
+
+
+// ---------- common (family) expenses: paid from the pool, admins only ----------
+export const createCommonExpense = (a) =>
+  call("create_common_expense", {
+    p_family_id: a.familyId,
+    p_title: a.title,
+    p_amount: a.amount,
+    p_currency: a.currency,
+    p_category_id: a.categoryId || null,
+    p_lbp_per_usd: a.lbpPerUsd ?? null,
+    p_note: a.note || null,
+    p_tagged_member_id: a.taggedMemberId || null,
+    p_created_at: a.createdAt || null,
+  });
+export const deleteCommonExpense = (id) => call("delete_common_expense", { p_id: id });
+
+export const createCommonBill = (a) =>
+  call("create_common_bill", {
+    p_family_id: a.familyId,
+    p_name: a.name,
+    p_amount: a.amount,
+    p_currency: a.currency,
+    p_recurrence: a.recurrence,
+    p_next_due: a.nextDue,
+    p_category_id: a.categoryId || null,
+    p_tagged_member_id: a.taggedMemberId || null,
+  });
+export const deleteCommonBill = (id) => call("delete_common_bill", { p_id: id });
+export const payCommonBill = ({ billId, amount, lbpPerUsd, createdAt }) =>
+  call("pay_common_bill", {
+    p_bill_id: billId,
+    p_amount: amount ?? null,
+    p_lbp_per_usd: lbpPerUsd ?? null,
+    p_created_at: createdAt || null,
+  });

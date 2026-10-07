@@ -10,6 +10,7 @@ import PlannedPayments from "./PlannedPayments";
 import ActivityFeed from "./ActivityFeed";
 import NotificationBell from "./NotificationBell";
 import CardsSection from "./CardsSection";
+import CommonExpenses from "./CommonExpenses";
 import BottomNav from "./BottomNav";
 import AddActionSheet from "./AddActionSheet";
 import TransactionHistoryModal from "./TransactionHistoryModal";
@@ -142,6 +143,7 @@ export default function Dashboard({ familyId }) {
   const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
   const [showFamilyHistoryModal, setShowFamilyHistoryModal] = useState(false);
   const [myRecentTransactions, setMyRecentTransactions] = useState([]);
+  const [commonReloadCounter, setCommonReloadCounter] = useState(0);
   const [balanceTransfersReloadCounter, setBalanceTransfersReloadCounter] =
     useState(0);
 
@@ -316,6 +318,14 @@ export default function Dashboard({ familyId }) {
       totals[name] =
         (totals[name] || 0) +
         (t.net_usd != null ? Number(t.net_usd) : t.amount * t.exchange_rate_to_base);
+    }
+    const { data: common } = await supabase
+      .from("common_expenses")
+      .select("net_usd, categories(name)")
+      .eq("family_id", familyId);
+    for (const c of common || []) {
+      const name = c.categories?.name ?? "Common expenses";
+      totals[name] = (totals[name] || 0) + Number(c.net_usd);
     }
     setBreakdown(Object.entries(totals).sort((a, b) => b[1] - a[1]));
   }
@@ -531,6 +541,20 @@ export default function Dashboard({ familyId }) {
           loadWallet();
           setBalanceTransfersReloadCounter((current) => current + 1);
         },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "common_expenses", filter: `family_id=eq.${familyId}` },
+        () => {
+          loadWallet();
+          loadBreakdown();
+          setCommonReloadCounter((c) => c + 1);
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "common_bills", filter: `family_id=eq.${familyId}` },
+        () => setCommonReloadCounter((c) => c + 1),
       )
       .subscribe();
 
@@ -781,6 +805,16 @@ export default function Dashboard({ familyId }) {
             loadCards();
             loadFamilyAndMembers();
           }}
+        />
+
+        <CommonExpenses
+          familyId={familyId}
+          members={members}
+          categories={categories}
+          amAdmin={amAdmin}
+          accounts={accounts}
+          reloadTrigger={commonReloadCounter}
+          onChanged={loadWallet}
         />
 
         {amAdmin && (
