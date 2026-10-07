@@ -9,10 +9,10 @@ Everything below runs in the Supabase SQL editor (paste the whole file, press Ru
 
 ## Scratch project (dry run)
 1. Create a second free Supabase project. Restore your data dump into it.
-2. Run in order: `0001_ledger_schema.sql`, `0002_backfill.sql`, `0003_money_functions.sql`, `0004_cutover.sql`, `0005_card_tags.sql`.
+2. Run in order: `0001_ledger_schema.sql`, `0002_backfill.sql`, `0003_money_functions.sql`, `0004_cutover.sql`, `0005_card_tags.sql`, `0006_common_expenses.sql`.
    - 0002 ends with one row: `RECONCILED`, family total 2333.31, pool 1727.32, members 580.91, cards 25.08, opening correction 600.92 (your numbers at audit time). Any error means it changed nothing: send me the message.
 3. Run `supabase/tests/0001_ledger_tests.sql`. A clean run ends with `ALL TESTS PASSED`.
-4. Rehearse rollback: `rollback/0005_down.sql`, `0004_down.sql`, `0003_down.sql`, `0002_down.sql`, `0001_down.sql` (in that order), then run the audit again: it must equal the "before" snapshot.
+4. Rehearse rollback: `rollback/0006_down.sql`, `0005_down.sql`, `0004_down.sql`, `0003_down.sql`, `0002_down.sql`, `0001_down.sql` (in that order), then run the audit again: it must equal the "before" snapshot.
 5. Repeat 2 to 4 once more. Two clean runs in a row = ready.
 
 ## Live cutover (same day as the new front end, nobody using the app)
@@ -36,3 +36,6 @@ Run `supabase/audit/integrity_check.sql` now and then (read-only). No rows retur
 - Pool = what the app shows today (1727.32); the 600.92 card-spending gap is one visible `opening_entries` row.
 - Card spending stays in `card_transactions` (with `net_usd`); new card spending uses `create_card_spend`.
 - Removing a member sets `members.removed_at` (history keeps their name); they must hold 0 first.
+
+
+**0006 (common expenses):** safe to run any time after 0005; the running app ignores the new tables. Run it BEFORE deploying the front end that shows the Common expenses section. Test on a scratch project first with `tests/0002_common_expense_tests.sql`. Its rollback is only safe before real common expenses exist (it refunds the pool and deletes them).

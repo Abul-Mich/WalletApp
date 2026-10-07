@@ -178,8 +178,20 @@ export default function Statistics({ familyId }) {
         .lte("created_at", end.toISOString());
       if (selectedMember !== "all") cardQuery = cardQuery.eq("member_id", selectedMember);
       const { data: cardData } = await cardQuery;
+      // Common (family) expenses belong to no member, so they only show in the all-members view.
+      let commonData = [];
+      if (selectedMember === "all") {
+        const { data: cx } = await supabase
+          .from("common_expenses")
+          .select("*")
+          .eq("family_id", familyId)
+          .gte("created_at", start.toISOString())
+          .lte("created_at", end.toISOString());
+        commonData = (cx || []).map((c) => ({ ...c, _common: true }));
+      }
       const merged = [
         ...(txnData || []),
+        ...commonData,
         ...(cardData || []).map((c) => ({ ...c, category_id: null, _card: true })),
       ].sort((x, y) => new Date(x.created_at) - new Date(y.created_at));
       setTransactions(merged);
@@ -240,7 +252,7 @@ export default function Statistics({ familyId }) {
     transactions.forEach((txn) => {
       const categoryName =
         (txn._card ? "Card spending" : categories.find((c) => c.id === txn.category_id)?.name) ||
-        "Uncategorized";
+        (txn._common ? "Common expenses" : "Uncategorized");
       categorySpend[categoryName] =
         (categorySpend[categoryName] || 0) + usd(txn);
     });
