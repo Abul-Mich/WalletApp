@@ -9,6 +9,25 @@ import { MoneyInput, TextInput, SelectInput } from "../components/Field";
 
 const SUGGESTIONS = ["Electricity", "Water", "Internet", "Generator", "Rent", "Tuition", "Phone", "Insurance"];
 
+// Cards/wallets that can pay an expense in this currency: [{id (account id), label}]
+function cardOptions(cards, accounts, currency) {
+  return (cards || [])
+    .filter((k) => !k.archived)
+    .map((k) => ({ k, a: accounts.cards[k.id] }))
+    .filter(({ a }) => a && a.currency === currency)
+    .map(({ k, a }) => ({ id: a.id, label: `${k.name} (${formatMoney(bal(a), currency)})` }));
+}
+
+function PaidFrom({ value, onChange, options }) {
+  if (options.length === 0) return null;
+  return (
+    <SelectInput label="Paid from" value={value} onChange={onChange}>
+      <option value="">Family pool</option>
+      {options.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
+    </SelectInput>
+  );
+}
+
 function daysUntil(dateStr) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -17,7 +36,7 @@ function daysUntil(dateStr) {
 
 // Family-wide costs paid from the pool (admins record them; everyone can see them).
 // They count toward the family budget, never toward a member's personal limit.
-export default function CommonExpenses({ familyId, members, categories, amAdmin, accounts, reloadTrigger, onChanged }) {
+export default function CommonExpenses({ familyId, members, categories, amAdmin, accounts, cards = [], reloadTrigger, onChanged }) {
   const [expenses, setExpenses] = useState([]);
   const [bills, setBills] = useState([]);
   const [monthStart, setMonthStart] = useState(null);
@@ -46,6 +65,10 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
   }, [familyId, reloadTrigger]);
 
   const name = (id) => members.find((m) => m.id === id)?.display_name;
+  const sourceName = (acctId) => {
+    const cardId = Object.keys(accounts.cards).find((k) => accounts.cards[k].id === acctId);
+    return cardId ? cards.find((k) => k.id === cardId)?.name : null;
+  };
   const catName = (id) => categories.find((c) => c.id === id)?.name;
 
   const { monthTotal, byPerson } = useMemo(() => {
@@ -68,7 +91,7 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
   }
 
   async function remove(e) {
-    if (!confirm(`Delete "${e.title}"? The money goes back to the family pool.`)) return;
+    if (!confirm(`Delete "${e.title}"? The money goes back to ${sourceName(e.account_id) ?? "the family pool"}.`)) return;
     setError(null);
     try {
       await deleteCommonExpense(e.id);
@@ -101,11 +124,11 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
         )}
       </div>
       <p className="hint">
-        Paid from the family pool ({formatUsd(bal(accounts.pool.USD))} · {formatMoney(bal(accounts.pool.LBP), "LBP")}). They count toward the family budget, not anyone's personal limit.
+        Paid from the family pool by default ({formatUsd(bal(accounts.pool.USD))} · {formatMoney(bal(accounts.pool.LBP), "LBP")}). They count toward the family budget, not anyone's personal limit.
       </p>
 
       {mode === "expense" && (
-        <ExpenseForm familyId={familyId} members={members} categories={categories} defaultRate={rate} onDone={done} onCancel={() => setMode(null)} />
+        <ExpenseForm familyId={familyId} members={members} categories={categories} cards={cards} accounts={accounts} defaultRate={rate} onDone={done} onCancel={() => setMode(null)} />
       )}
       {mode === "bill" && (
         <BillForm familyId={familyId} members={members} categories={categories} onDone={done} onCancel={() => setMode(null)} />
@@ -148,7 +171,7 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
                   </div>
                 )}
               </div>
-              {paying?.id === b.id && <PayForm bill={b} defaultRate={rate} onDone={done} onCancel={() => setPaying(null)} />}
+              {paying?.id === b.id && <PayForm bill={b} cards={cards} accounts={accounts} defaultRate={rate} onDone={done} onCancel={() => setPaying(null)} />}
             </li>
           );
         })}
@@ -165,7 +188,7 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
                 {e.currency !== "USD" && <span className="txn-converted"> ({formatMoney(e.amount, e.currency)})</span>}
               </span>
               <span className="txn-meta">
-                {e.title}{catName(e.category_id) ? ` · ${catName(e.category_id)}` : ""}{e.tagged_member_id ? ` · for ${name(e.tagged_member_id) ?? "a member"}` : ""} · {formatDateTime(e.created_at)}
+                {e.title}{catName(e.category_id) ? ` · ${catName(e.category_id)}` : ""}{e.tagged_member_id ? ` · for ${name(e.tagged_member_id) ?? "a member"}` : ""}{sourceName(e.account_id) ? ` · paid from ${sourceName(e.account_id)}` : ""} · {formatDateTime(e.created_at)}
               </span>
             </div>
             {e.note && <p className="txn-note">{e.note}</p>}
@@ -182,7 +205,7 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
   );
 }
 
-function ExpenseForm({ familyId, members, categories, defaultRate, onDone, onCancel }) {
+function ExpenseForm({ familyId, members, categories, cards, accounts, defaultRate, onDone, onCancel }) {
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
@@ -191,8 +214,11 @@ function ExpenseForm({ familyId, members, categories, defaultRate, onDone, onCan
   const [tag, setTag] = useState("");
   const [note, setNote] = useState("");
   const [when, setWhen] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const options = cardOptions(cards, accounts, currency);
+  const chosen = options.some((o) => o.id === accountId) ? accountId : "";
 
   async function submit(e) {
     e.preventDefault();
@@ -203,7 +229,7 @@ function ExpenseForm({ familyId, members, categories, defaultRate, onDone, onCan
     setError(null);
     try {
       await createCommonExpense({
-        familyId, title, amount: n, currency, categoryId, note, taggedMemberId: tag,
+        familyId, title, amount: n, currency, categoryId, note, taggedMemberId: tag, accountId: chosen,
         lbpPerUsd: currency === "LBP" ? parseNumber(rate) : null,
         createdAt: when ? new Date(when).toISOString() : null,
       });
@@ -241,6 +267,7 @@ function ExpenseForm({ familyId, members, categories, defaultRate, onDone, onCan
           {members.map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
         </SelectInput>
       </div>
+      <PaidFrom value={chosen} onChange={setAccountId} options={options} />
       <TextInput label="Date and time" type="datetime-local" value={when} onChange={setWhen} help="Leave empty for now" />
       <TextInput label="Note" value={note} onChange={setNote} placeholder="Optional" />
       <div className="form-actions">
@@ -318,11 +345,13 @@ function BillForm({ familyId, members, categories, onDone, onCancel }) {
 }
 
 // Pay a bill from the pool. The amount starts as the usual one; change it if this month's bill differs.
-function PayForm({ bill, defaultRate, onDone, onCancel }) {
+function PayForm({ bill, cards, accounts, defaultRate, onDone, onCancel }) {
   const [amount, setAmount] = useState(String(bill.amount));
   const [rate, setRate] = useState(defaultRate);
+  const [accountId, setAccountId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const options = cardOptions(cards, accounts, bill.currency);
 
   async function submit(e) {
     e.preventDefault();
@@ -331,7 +360,7 @@ function PayForm({ bill, defaultRate, onDone, onCancel }) {
     setBusy(true);
     setError(null);
     try {
-      await payCommonBill({ billId: bill.id, amount: n, lbpPerUsd: bill.currency === "LBP" ? parseNumber(rate) : null });
+      await payCommonBill({ billId: bill.id, amount: n, accountId, lbpPerUsd: bill.currency === "LBP" ? parseNumber(rate) : null });
       onDone();
     } catch (err) {
       setError(err.message);
@@ -346,8 +375,9 @@ function PayForm({ bill, defaultRate, onDone, onCancel }) {
         <MoneyInput label={`Amount this time`} unit={bill.currency} value={amount} onChange={setAmount} required />
         {bill.currency === "LBP" && <MoneyInput label="Exchange rate" unit="LBP/USD" value={rate} onChange={setRate} required />}
       </div>
+      <PaidFrom value={accountId} onChange={setAccountId} options={options} />
       <div className="form-actions">
-        <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Paying..." : "Pay from pool"}</button>
+        <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Paying..." : accountId ? "Pay from card" : "Pay from pool"}</button>
         <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
       {error && <p className="status error">{error}</p>}

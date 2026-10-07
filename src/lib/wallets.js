@@ -241,6 +241,7 @@ export const createCommonExpense = (a) =>
     p_note: a.note || null,
     p_tagged_member_id: a.taggedMemberId || null,
     p_created_at: a.createdAt || null,
+    p_account_id: a.accountId || null,
   });
 export const deleteCommonExpense = (id) => call("delete_common_expense", { p_id: id });
 
@@ -256,10 +257,11 @@ export const createCommonBill = (a) =>
     p_tagged_member_id: a.taggedMemberId || null,
   });
 export const deleteCommonBill = (id) => call("delete_common_bill", { p_id: id });
-export const payCommonBill = ({ billId, amount, lbpPerUsd, createdAt }) =>
+export const payCommonBill = ({ billId, amount, lbpPerUsd, createdAt, accountId }) =>
   call("pay_common_bill", {
     p_bill_id: billId,
     p_amount: amount ?? null,
     p_lbp_per_usd: lbpPerUsd ?? null,
     p_created_at: createdAt || null,
+    p_account_id: accountId || null,
   });

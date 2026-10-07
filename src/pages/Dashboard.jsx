@@ -813,6 +813,7 @@ export default function Dashboard({ familyId }) {
           categories={categories}
           amAdmin={amAdmin}
           accounts={accounts}
+          cards={cards}
           reloadTrigger={commonReloadCounter}
           onChanged={loadWallet}
         />
