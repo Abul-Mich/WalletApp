@@ -3,7 +3,7 @@ import { createCard, fmtMoney } from "../lib/wallets";
 import CardDetailModal from "./CardDetailModal";
 
 export default function CardsSection({
-  familyId, memberId, cards, accounts, members, amAdmin, amSuperadmin, onChanged,
+  familyId, memberId, cards, accounts, members, categories, amAdmin, amSuperadmin, onChanged,
 }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
   const selectedCard = cards.find((c) => c.id === selectedCardId) || null;
@@ -90,6 +90,7 @@ export default function CardsSection({
           cardAccount={accounts.cards[selectedCard.id]}
           poolAccounts={accounts.pool}
           members={members}
+          categories={categories}
           amAdmin={amAdmin}
           amSuperadmin={amSuperadmin}
           onClose={() => setSelectedCardId(null)}

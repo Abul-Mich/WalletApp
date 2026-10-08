@@ -1778,3 +1778,7 @@ button.link-btn:hover {
 .form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .form-actions .btn { flex: 1; }
 .txn-amount, .balance, .balance-inline, .summary-value { font-variant-numeric: tabular-nums; }
+
+/* checkbox row (e.g. "Family cost") */
+.check-row { display: flex; align-items: flex-start; gap: 10px; font-size: 15px; cursor: pointer; }
+.check-row input { width: 20px; height: 20px; margin-top: 1px; flex: 0 0 auto; }

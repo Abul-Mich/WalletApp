@@ -66,13 +66,33 @@ export default function TransactionHistoryModal({
       .order("created_at", { ascending: false })
       .range(from, to);
 
-    if (memberId) query = query.eq("member_id", memberId);
-    if (!memberId && filterMemberId)
-      query = query.eq("member_id", filterMemberId);
+    const who = memberId || filterMemberId;
+    if (who) query = query.or(`member_id.eq.${who},tagged_member_id.eq.${who}`);
     if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
     if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59`);
     if (search.trim()) query = query.ilike("note", `%${search.trim()}%`);
 
+    return query;
+  }
+
+  // Family costs tagged to a member show in that member's records (read-only).
+  function buildCommonQuery(from, to) {
+    let query = supabase
+      .from("common_expenses")
+      .select("*")
+      .eq("family_id", familyId)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    const who = memberId || filterMemberId;
+    if (who) query = query.eq("tagged_member_id", who);
+    if (categoryId) query = query.eq("category_id", categoryId);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59`);
+    if (search.trim()) {
+      const q = search.trim().replace(/[,()]/g, " ");
+      query = query.or(`title.ilike.%${q}%,note.ilike.%${q}%`);
+    }
     return query;
   }
 
@@ -84,9 +104,10 @@ export default function TransactionHistoryModal({
     if (reset) setLoading(true);
     else setLoadingMore(true);
 
-    const [{ data: normalRows }, { data: cardRows }] = await Promise.all([
+    const [{ data: normalRows }, { data: cardRows }, { data: commonRows }] = await Promise.all([
       buildTransactionQuery(from, to),
       buildCardQuery(from, to),
+      buildCommonQuery(from, to),
     ]);
 
     const normal = (normalRows || []).map((t) => ({
@@ -94,12 +115,17 @@ export default function TransactionHistoryModal({
       kind: "transaction",
     }));
     const cards = (cardRows || []).map((t) => ({ ...t, kind: "card" }));
-    const chunk = [...normal, ...cards].sort(
+    const commons = (commonRows || []).map((t) => ({ ...t, kind: "common" }));
+    const chunk = [...normal, ...cards, ...commons].sort(
       (a, b) => new Date(b.created_at) - new Date(a.created_at),
     );
 
     setRows((prev) => (reset ? chunk : [...prev, ...chunk]));
-    setHasMore(chunk.length === PAGE_SIZE);
+    setHasMore(
+      (normalRows?.length ?? 0) === PAGE_SIZE ||
+      (cardRows?.length ?? 0) === PAGE_SIZE ||
+      (commonRows?.length ?? 0) === PAGE_SIZE,
+    );
     setPage(nextPage);
     setLoading(false);
     setLoadingMore(false);
@@ -229,7 +255,7 @@ export default function TransactionHistoryModal({
                 t={t}
                 categories={categories}
                 members={members}
-                canManage={amAdmin || t.member_id === effectiveViewerId}
+                canManage={t.kind !== "common" && (amAdmin || t.member_id === effectiveViewerId)}
                 onChanged={handleChanged}
               />
             ))}
