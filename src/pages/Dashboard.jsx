@@ -278,7 +278,7 @@ export default function Dashboard({ familyId }) {
   async function loadMyRecentTransactions(memberId) {
     if (!memberId) return;
 
-    const [{ data: normalRows }, { data: cardRows }] = await Promise.all([
+    const [{ data: normalRows }, { data: cardRows }, { data: commonRows }] = await Promise.all([
       supabase
         .from("transactions")
         .select("*")
@@ -290,7 +290,14 @@ export default function Dashboard({ familyId }) {
         .from("card_transactions")
         .select("*")
         .eq("family_id", familyId)
-        .eq("member_id", memberId)
+        .or(`member_id.eq.${memberId},tagged_member_id.eq.${memberId}`)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("common_expenses")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("tagged_member_id", memberId)
         .order("created_at", { ascending: false })
         .limit(5),
     ]);
@@ -298,6 +305,7 @@ export default function Dashboard({ familyId }) {
     const rows = [
       ...(normalRows || []).map((t) => ({ ...t, kind: "transaction" })),
       ...(cardRows || []).map((t) => ({ ...t, kind: "card" })),
+      ...(commonRows || []).map((t) => ({ ...t, kind: "common" })),
     ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     setMyRecentTransactions(rows.slice(0, 5));
@@ -548,6 +556,7 @@ export default function Dashboard({ familyId }) {
         () => {
           loadWallet();
           loadBreakdown();
+          if (myMemberRef.current?.id) loadMyRecentTransactions(myMemberRef.current.id);
           setCommonReloadCounter((c) => c + 1);
         },
       )
@@ -799,6 +808,7 @@ export default function Dashboard({ familyId }) {
           cards={cards}
           accounts={accounts}
           members={members}
+          categories={categories}
           amAdmin={amAdmin}
           amSuperadmin={amSuperadmin}
           onChanged={() => {
@@ -1130,7 +1140,7 @@ export default function Dashboard({ familyId }) {
               t={t}
               categories={categories}
               members={allMembers}
-              canManage={t.member_id === myMember?.id || amAdmin}
+              canManage={t.kind !== "common" && (t.member_id === myMember?.id || amAdmin)}
               onChanged={() => {
                 loadTransactions();
                 loadBreakdown();

@@ -19,15 +19,22 @@ function toLocalInput(iso) {
 // that counts toward limits) with the original currency beside it.
 export default function TransactionRow({ t, categories, members, canManage, onChanged }) {
   const isCard = t.kind === "card";
+  const isCommon = t.kind === "common"; // read-only: managed in Common expenses
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const categoryName = isCard
+  const categoryName = isCommon
+    ? categories?.find((c) => c.id === t.category_id)?.name ?? "Common expenses"
+    : isCard
     ? "Card spending"
     : categories?.find((c) => c.id === t.category_id)?.name ?? "Uncategorized";
-  const memberName = members?.find((m) => m.id === t.member_id)?.display_name ?? "Unknown member";
+  const nameOf = (id) => members?.find((m) => m.id === id)?.display_name;
+  const memberName = isCommon
+    ? `Common cost: ${t.title}`
+    : (nameOf(t.member_id) ?? "Unknown member") +
+      (isCard && t.tagged_member_id && t.tagged_member_id !== t.member_id ? ` (for ${nameOf(t.tagged_member_id) ?? "a member"})` : "");
   const net = t.net_usd != null ? Number(t.net_usd) : Number(t.amount) * Number(t.exchange_rate_to_base);
 
   async function startEdit() {
@@ -157,7 +164,8 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
         <span className="txn-meta">{categoryName} · {memberName} · {formatDateTime(t.created_at)}</span>
       </div>
       {t.note && <p className="txn-note">{t.note}</p>}
-      {canManage && (
+      {isCommon && <p className="txn-note">Family cost, doesn't count toward your limit.</p>}
+      {canManage && !isCommon && (
         <div className="txn-actions">
           {!isCard && <button type="button" disabled={busy} onClick={startEdit}>Edit</button>}
           <button type="button" className="remove-btn" disabled={busy} onClick={remove}>Delete</button>

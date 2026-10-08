@@ -33,11 +33,11 @@ export function MoneyInput({ label, help, unit, value, onChange, placeholder, re
   );
 }
 
-export function TextInput({ label, help, value, onChange, placeholder, type = "text", required }) {
+export function TextInput({ label, help, value, onChange, placeholder, type = "text", required, max }) {
   return (
     <Field label={label} help={help}>
       <div className="input">
-        <input type={type} placeholder={placeholder} value={value} required={required} onChange={(e) => onChange(e.target.value)} />
+        <input type={type} placeholder={placeholder} value={value} required={required} max={max} onChange={(e) => onChange(e.target.value)} />
       </div>
     </Field>
   );

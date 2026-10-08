@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { deleteTransfer, deleteCardSpend, fmtMoney, fmtWhen } from "../lib/wallets";
+import { deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
 import CardTopUpForm from "./CardTopUpForm";
 import CardWithdrawForm from "./CardWithdrawForm";
 
 const PAGE_SIZE = 20;
 
 export default function CardDetailModal({
-  familyId, memberId, card, cardAccount, poolAccounts, members, amAdmin, amSuperadmin, onClose, onChanged,
+  familyId, memberId, card, cardAccount, poolAccounts, members, categories, amAdmin, amSuperadmin, onClose, onChanged,
 }) {
   const [tab, setTab] = useState(card.archived ? "history" : "topup");
   const [history, setHistory] = useState([]);
@@ -22,11 +22,13 @@ export default function CardDetailModal({
 
   async function loadHistory(nextLimit) {
     setLoading(true);
-    const [{ data: transfers }, { data: spends }] = await Promise.all([
+    const [{ data: transfers }, { data: spends }, { data: commons }] = await Promise.all([
       supabase.from("transfers").select("*")
         .or(`to_account_id.eq.${cardAccount.id},from_account_id.eq.${cardAccount.id}`)
         .order("created_at", { ascending: false }).limit(nextLimit),
       supabase.from("card_transactions").select("*").eq("card_id", card.id)
+        .order("created_at", { ascending: false }).limit(nextLimit),
+      supabase.from("common_expenses").select("*").eq("account_id", cardAccount.id)
         .order("created_at", { ascending: false }).limit(nextLimit),
     ]);
     const combined = [
@@ -35,9 +37,10 @@ export default function CardDetailModal({
         sign: r.to_account_id === cardAccount.id ? 1 : -1,
       })),
       ...(spends || []).map((r) => ({ ...r, kind: "spend", sign: -1 })),
+      ...(commons || []).map((r) => ({ ...r, kind: "common", member_id: r.created_by, sign: -1 })),
     ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     setHistory(combined.slice(0, nextLimit));
-    setHasMore((transfers?.length ?? 0) === nextLimit || (spends?.length ?? 0) === nextLimit);
+    setHasMore((transfers?.length ?? 0) === nextLimit || (spends?.length ?? 0) === nextLimit || (commons?.length ?? 0) === nextLimit);
     setLoading(false);
   }
 
@@ -54,7 +57,7 @@ export default function CardDetailModal({
 
   // Edits are delete + re-enter: the ledger never rewrites a money movement.
   function canDelete(r) {
-    if (r.kind === "topup") return amAdmin;
+    if (r.kind === "topup" || r.kind === "common") return amAdmin;
     return r.member_id === memberId || amSuperadmin;
   }
 
@@ -62,6 +65,7 @@ export default function CardDetailModal({
     if (!confirm("Delete this entry? The card balance will be recalculated.")) return;
     try {
       if (r.kind === "topup") await deleteTransfer(r.id);
+      else if (r.kind === "common") await deleteCommonExpense(r.id);
       else await deleteCardSpend(r.id);
       handleDone();
     } catch (err) {
@@ -146,7 +150,7 @@ export default function CardDetailModal({
             <CardTopUpForm cardAccount={cardAccount} poolAccounts={poolAccounts} members={members} onDone={handleDone} />
           )}
           {!card.archived && tab === "withdraw" && (
-            <CardWithdrawForm familyId={familyId} memberId={memberId} members={members} card={card} cardAccount={cardAccount} onDone={handleDone} />
+            <CardWithdrawForm familyId={familyId} memberId={memberId} members={members} categories={categories} amAdmin={amAdmin} card={card} cardAccount={cardAccount} onDone={handleDone} />
           )}
 
           {tab === "history" && (
@@ -161,7 +165,7 @@ export default function CardDetailModal({
                         {r.sign > 0 ? "+" : "-"}{fmtMoney(r.kind === "topup" ? r.amount : r.amount, cur)}
                       </span>
                       <span className="txn-meta">
-                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : "Spent"} ·{" "}
+                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : "Spent"} ·{" "}
                         {members?.find((m) => m.id === r.member_id)?.display_name ?? "Unknown member"}
                         {r.tagged_member_id && r.tagged_member_id !== r.member_id &&
                           ` · for ${members?.find((m) => m.id === r.tagged_member_id)?.display_name ?? "a member"}`} · {fmtWhen(r.created_at)}
