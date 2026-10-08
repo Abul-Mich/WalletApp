@@ -176,7 +176,7 @@ export default function Statistics({ familyId }) {
         .eq("family_id", familyId)
         .gte("created_at", start.toISOString())
         .lte("created_at", end.toISOString());
-      if (selectedMember !== "all") cardQuery = cardQuery.eq("member_id", selectedMember);
+      if (selectedMember !== "all") cardQuery = cardQuery.eq("tagged_member_id", selectedMember);
       const { data: cardData } = await cardQuery;
       // Common (family) expenses belong to no member, so they only show in the all-members view.
       let commonData = [];
@@ -192,7 +192,8 @@ export default function Statistics({ familyId }) {
       const merged = [
         ...(txnData || []),
         ...commonData,
-        ...(cardData || []).map((c) => ({ ...c, category_id: null, _card: true })),
+        // attribute card spending to the person it was spent for
+        ...(cardData || []).map((c) => ({ ...c, member_id: c.tagged_member_id ?? c.member_id, category_id: null, _card: true })),
       ].sort((x, y) => new Date(x.created_at) - new Date(y.created_at));
       setTransactions(merged);
 
