@@ -290,7 +290,7 @@ export default function Dashboard({ familyId }) {
         .from("card_transactions")
         .select("*")
         .eq("family_id", familyId)
-        .or(`member_id.eq.${memberId},tagged_member_id.eq.${memberId}`)
+        .eq("tagged_member_id", memberId)
         .order("created_at", { ascending: false })
         .limit(5),
       supabase

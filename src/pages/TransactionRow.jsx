@@ -31,10 +31,13 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
     ? "Card spending"
     : categories?.find((c) => c.id === t.category_id)?.name ?? "Uncategorized";
   const nameOf = (id) => members?.find((m) => m.id === id)?.display_name;
+  // Card spending is shown under the person it was spent for; say who logged it if that is someone else.
   const memberName = isCommon
     ? `Common cost: ${t.title}`
-    : (nameOf(t.member_id) ?? "Unknown member") +
-      (isCard && t.tagged_member_id && t.tagged_member_id !== t.member_id ? ` (for ${nameOf(t.tagged_member_id) ?? "a member"})` : "");
+    : isCard
+    ? (nameOf(t.tagged_member_id ?? t.member_id) ?? "Unknown member") +
+      (t.tagged_member_id && t.tagged_member_id !== t.member_id ? ` (logged by ${nameOf(t.member_id) ?? "a member"})` : "")
+    : nameOf(t.member_id) ?? "Unknown member";
   const net = t.net_usd != null ? Number(t.net_usd) : Number(t.amount) * Number(t.exchange_rate_to_base);
 
   async function startEdit() {
