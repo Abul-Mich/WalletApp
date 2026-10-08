@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient";
 import { deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
 import CardTopUpForm from "./CardTopUpForm";
 import CardWithdrawForm from "./CardWithdrawForm";
+import CardToWalletForm from "./CardToWalletForm";
 
 const PAGE_SIZE = 20;
 
@@ -50,7 +51,22 @@ export default function CardDetailModal({
   }, [card.id, limit]);
 
   // Where a top-up came from: "Family pool" or "<name>'s wallet".
+  function nameOfAccount(id) {
+    if (Object.values(poolAccounts || {}).some((a) => a.id === id)) return "Family pool";
+    for (const [mid, pair] of Object.entries(memberAccounts || {})) {
+      if (Object.values(pair).some((a) => a.id === id)) {
+        const n = members?.find((m) => m.id === mid)?.display_name;
+        return n ? `${n}'s wallet` : "a member wallet";
+      }
+    }
+    return null;
+  }
+
   function sourceLabel(r) {
+    if (r.kind === "topup" && r.sign < 0) {
+      const to = nameOfAccount(r.to_account_id);
+      return to ? ` · to ${to}` : "";
+    }
     if (r.kind !== "topup" || r.sign < 0) return "";
     if (Object.values(poolAccounts || {}).some((a) => a.id === r.from_account_id)) return " · from Family pool";
     for (const [mid, pair] of Object.entries(memberAccounts || {})) {
@@ -152,6 +168,8 @@ export default function CardDetailModal({
             <>
               <button type="button" className={`sheet-tab ${tab === "topup" ? "active" : ""}`} onClick={() => setTab("topup")}>Top up</button>
               <button type="button" className={`sheet-tab ${tab === "withdraw" ? "active" : ""}`} onClick={() => setTab("withdraw")}>Spend</button>
+
+              <button type="button" className={`sheet-tab ${tab === "towallet" ? "active" : ""}`} onClick={() => setTab("towallet")}>To my wallet</button>
             </>
           )}
           <button type="button" className={`sheet-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>History</button>
@@ -164,6 +182,10 @@ export default function CardDetailModal({
           )}
           {!card.archived && tab === "withdraw" && (
             <CardWithdrawForm familyId={familyId} memberId={memberId} members={members} categories={categories} amAdmin={amAdmin} card={card} cardAccount={cardAccount} onDone={handleDone} />
+          )}
+
+          {!card.archived && tab === "towallet" && (
+            <CardToWalletForm cardAccount={cardAccount} memberAccounts={memberAccounts} memberId={memberId} onDone={handleDone} />
           )}
 
           {tab === "history" && (
