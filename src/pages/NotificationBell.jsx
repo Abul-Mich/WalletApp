@@ -126,6 +126,12 @@ export default function NotificationBell({
                       {formatNumber2(n.amount)}
                     </>
                   )}
+                  {n.type === "card_to_wallet" && (
+                    <>
+                      moved {formatNumber2(n.amount)} from {cardName(n.card_id)}{" "}
+                      to their wallet
+                    </>
+                  )}
                   {n.type === "card_withdraw" && (
                     <>
                       spent {formatUsd(n.amount)} from{" "}
