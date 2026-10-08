@@ -89,6 +89,7 @@ export default function CardsSection({
           card={selectedCard}
           cardAccount={accounts.cards[selectedCard.id]}
           poolAccounts={accounts.pool}
+          memberAccounts={accounts.members}
           members={members}
           categories={categories}
           amAdmin={amAdmin}
