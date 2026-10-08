@@ -7,7 +7,7 @@ import CardWithdrawForm from "./CardWithdrawForm";
 const PAGE_SIZE = 20;
 
 export default function CardDetailModal({
-  familyId, memberId, card, cardAccount, poolAccounts, members, categories, amAdmin, amSuperadmin, onClose, onChanged,
+  familyId, memberId, card, cardAccount, poolAccounts, memberAccounts, members, categories, amAdmin, amSuperadmin, onClose, onChanged,
 }) {
   const [tab, setTab] = useState(card.archived ? "history" : "topup");
   const [history, setHistory] = useState([]);
@@ -48,6 +48,19 @@ export default function CardDetailModal({
     loadHistory(limit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, limit]);
+
+  // Where a top-up came from: "Family pool" or "<name>'s wallet".
+  function sourceLabel(r) {
+    if (r.kind !== "topup" || r.sign < 0) return "";
+    if (Object.values(poolAccounts || {}).some((a) => a.id === r.from_account_id)) return " · from Family pool";
+    for (const [mid, pair] of Object.entries(memberAccounts || {})) {
+      if (Object.values(pair).some((a) => a.id === r.from_account_id)) {
+        const n = members?.find((m) => m.id === mid)?.display_name;
+        return n ? ` · from ${n}'s wallet` : " · from a member wallet";
+      }
+    }
+    return "";
+  }
 
   function handleDone() {
     onChanged?.();
@@ -147,7 +160,7 @@ export default function CardDetailModal({
         <div className="sheet-body">
           {card.archived && tab !== "history" && <p className="hint">This card is archived. Unarchive it to use it again.</p>}
           {!card.archived && tab === "topup" && (
-            <CardTopUpForm cardAccount={cardAccount} poolAccounts={poolAccounts} members={members} onDone={handleDone} />
+            <CardTopUpForm cardAccount={cardAccount} poolAccounts={poolAccounts} memberAccounts={memberAccounts} memberId={memberId} amAdmin={amAdmin} members={members} onDone={handleDone} />
           )}
           {!card.archived && tab === "withdraw" && (
             <CardWithdrawForm familyId={familyId} memberId={memberId} members={members} categories={categories} amAdmin={amAdmin} card={card} cardAccount={cardAccount} onDone={handleDone} />
@@ -165,7 +178,7 @@ export default function CardDetailModal({
                         {r.sign > 0 ? "+" : "-"}{fmtMoney(r.kind === "topup" ? r.amount : r.amount, cur)}
                       </span>
                       <span className="txn-meta">
-                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : "Spent"} ·{" "}
+                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : "Spent"}{sourceLabel(r)} ·{" "}
                         {members?.find((m) => m.id === r.member_id)?.display_name ?? "Unknown member"}
                         {r.tagged_member_id && r.tagged_member_id !== r.member_id &&
                           ` · for ${members?.find((m) => m.id === r.tagged_member_id)?.display_name ?? "a member"}`} · {fmtWhen(r.created_at)}
