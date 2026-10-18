@@ -72,8 +72,27 @@ export function totalUsd(pair, lbpPerUsd) {
   return usd + (lbpPerUsd > 0 ? lbp / lbpPerUsd : 0);
 }
 
-// Latest LBP-per-USD rate known to the family (override table first).
+// The LBP-per-USD rate to suggest in forms: the rate most recently USED by the family
+// (expenses, exchanges, common expenses), which is also the rate the database compares
+// non-admin entries against, so the suggestion is always accepted. Falls back to the
+// admin's rate override when nothing has been recorded in LBP yet.
 export async function latestLbpRate(familyId) {
+  const newest = (table) =>
+    supabase
+      .from(table)
+      .select("lbp_per_usd, created_at")
+      .eq("family_id", familyId)
+      .not("lbp_per_usd", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  const results = await Promise.all([newest("transactions"), newest("exchanges"), newest("common_expenses")]);
+  const used = results
+    .map((r) => r.data)
+    .filter(Boolean)
+    .sort((x, y) => new Date(y.created_at) - new Date(x.created_at))[0];
+  if (used) return Number(used.lbp_per_usd);
+
   const { data } = await supabase
     .from("exchange_rate_overrides")
     .select("rate")
@@ -176,7 +195,7 @@ export const deleteExchange = (id) => call("delete_exchange", { p_id: id });
 export const createCard = ({ familyId, name, currency }) =>
   call("create_card", { p_family_id: familyId, p_name: name, p_currency: currency });
 
-export const createCardSpend = ({ cardId, amount, note, lbpPerUsd, createdAt, taggedMemberId }) =>
+export const createCardSpend = ({ cardId, amount, note, lbpPerUsd, createdAt, taggedMemberId, categoryId }) =>
   call("create_card_spend", {
     p_card_id: cardId,
     p_amount: amount,
@@ -184,8 +203,19 @@ export const createCardSpend = ({ cardId, amount, note, lbpPerUsd, createdAt, ta
     p_lbp_per_usd: lbpPerUsd ?? null,
     p_created_at: createdAt || null,
     p_tagged_member_id: taggedMemberId || null,
+    p_category_id: categoryId || null,
   });
 export const deleteCardSpend = (id) => call("delete_card_spend", { p_id: id });
+export const updateCardSpend = ({ id, amount, note, lbpPerUsd, createdAt, taggedMemberId, categoryId }) =>
+  call("update_card_spend", {
+    p_id: id,
+    p_amount: amount,
+    p_note: note || null,
+    p_lbp_per_usd: lbpPerUsd ?? null,
+    p_created_at: createdAt || null,
+    p_tagged_member_id: taggedMemberId || null,
+    p_category_id: categoryId || null,
+  });
 
 // ---------- limits / periods ----------
 export const periodStart = (period) => call("period_start", { p_period: period });
@@ -244,6 +274,19 @@ export const createCommonExpense = (a) =>
     p_account_id: a.accountId || null,
   });
 export const deleteCommonExpense = (id) => call("delete_common_expense", { p_id: id });
+export const updateCommonExpense = (a) =>
+  call("update_common_expense", {
+    p_id: a.id,
+    p_title: a.title,
+    p_amount: a.amount,
+    p_currency: a.currency,
+    p_category_id: a.categoryId || null,
+    p_lbp_per_usd: a.lbpPerUsd ?? null,
+    p_note: a.note || null,
+    p_tagged_member_id: a.taggedMemberId || null,
+    p_created_at: a.createdAt || null,
+    p_account_id: a.accountId || null,
+  });
 
 export const createCommonBill = (a) =>
   call("create_common_bill", {
@@ -265,3 +308,12 @@ export const payCommonBill = ({ billId, amount, lbpPerUsd, createdAt, accountId 
     p_created_at: createdAt || null,
     p_account_id: accountId || null,
   });
+
+// Spending totals computed by the database (day, category, person). Dates are ISO strings or null for "all time".
+export async function spendRollup({ familyId, from = null, to = null, memberId = null }) {
+  const { data, error } = await supabase.rpc("spend_rollup", {
+    p_family_id: familyId, p_from: from, p_to: to, p_member_id: memberId,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}

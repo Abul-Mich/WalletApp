@@ -69,6 +69,7 @@ export default function TransactionHistoryModal({
     // Card spending belongs to the person it was spent FOR (the tag), not whoever typed it in.
     const who = memberId || filterMemberId;
     if (who) query = query.eq("tagged_member_id", who);
+    if (categoryId) query = query.eq("category_id", categoryId);
     if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
     if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59`);
     if (search.trim()) query = query.ilike("note", `%${search.trim()}%`);

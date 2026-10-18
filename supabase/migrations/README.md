@@ -9,10 +9,10 @@ Everything below runs in the Supabase SQL editor (paste the whole file, press Ru
 
 ## Scratch project (dry run)
 1. Create a second free Supabase project. Restore your data dump into it.
-2. Run in order: `0001_ledger_schema.sql`, `0002_backfill.sql`, `0003_money_functions.sql`, `0004_cutover.sql`, `0005_card_tags.sql`, `0006_common_expenses.sql`, `0007_common_paid_from_card.sql`, `0008_card_topup_from_member.sql`, `0009_card_to_wallet.sql`.
+2. Run in order: `0001_ledger_schema.sql`, `0002_backfill.sql`, `0003_money_functions.sql`, `0004_cutover.sql`, `0005_card_tags.sql`, `0006_common_expenses.sql`, `0007_common_paid_from_card.sql`, `0008_card_topup_from_member.sql`, `0009_card_to_wallet.sql`, `0010_card_spend_category.sql`.
    - 0002 ends with one row: `RECONCILED`, family total 2333.31, pool 1727.32, members 580.91, cards 25.08, opening correction 600.92 (your numbers at audit time). Any error means it changed nothing: send me the message.
 3. Run `supabase/tests/0001_ledger_tests.sql`. A clean run ends with `ALL TESTS PASSED`.
-4. Rehearse rollback: `rollback/0009_down.sql`, `rollback/0008_down.sql`, `rollback/0007_down.sql`, `rollback/0006_down.sql`, `0005_down.sql`, `0004_down.sql`, `0003_down.sql`, `0002_down.sql`, `0001_down.sql` (in that order), then run the audit again: it must equal the "before" snapshot.
+4. Rehearse rollback: `rollback/0010_down.sql`, `rollback/0009_down.sql`, `rollback/0008_down.sql`, `rollback/0007_down.sql`, `rollback/0006_down.sql`, `0005_down.sql`, `0004_down.sql`, `0003_down.sql`, `0002_down.sql`, `0001_down.sql` (in that order), then run the audit again: it must equal the "before" snapshot.
 5. Repeat 2 to 4 once more. Two clean runs in a row = ready.
 
 ## Live cutover (same day as the new front end, nobody using the app)
@@ -45,3 +45,9 @@ Run `supabase/audit/integrity_check.sql` now and then (read-only). No rows retur
 **0008 (card top-up from a member wallet):** run after 0005 (independent of 0006/0007). It only widens who may move money onto a card: a member's own wallet is now allowed. Test with `tests/0004_card_topup_source_tests.sql` on scratch first. Note: the test files do not clean up after themselves if a test FAILS midway (they are not wrapped in one transaction), so use a scratch project.
 
 **0009 (card to own wallet):** run after 0008. A member can move card money onto their own wallet (card to pool or to someone else stays admin-only). Test with `tests/0005_card_to_wallet_tests.sql` on scratch first.
+
+**0010 (category on card spending):** run after 0006. Existing card spends keep no category (they show as "Card spending"). Category budgets now include card spending. Test with `tests/0006_card_category_tests.sql` on scratch first. Its rollback drops the column (categories chosen on card spends are lost).
+
+**0011 (spending rollup):** run after 0010, before deploying the front end that uses it (Statistics and the dashboard category breakdown). It only adds one read-only function; no data changes. Test with `tests/0007_spend_rollup_tests.sql` on scratch first. Rollback is `rollback/0011_down.sql`.
+
+**0012 (edit card spending and common expenses):** run after 0010, before deploying the front end with the Edit buttons on those records. Adds two functions, changes no data. Test with `tests/0008_edit_spends_tests.sql` on scratch first (it briefly deposits some LBP into the pool and removes it again). Rollback is `rollback/0012_down.sql`; edits already made keep their new values.

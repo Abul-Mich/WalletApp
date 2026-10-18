@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient";
 import { buildLegs, netUsd, updateExpense, deleteExpense, deleteCardSpend } from "../lib/wallets";
 import { formatUsd, formatMoney, formatDateTime, parseNumber } from "../lib/format";
 import { MoneyInput, TextInput, SelectInput, FormGroup } from "../components/Field";
+import CardSpendEditForm from "./CardSpendEditForm";
 
 const num = (v) => {
   const n = parseNumber(v);
@@ -28,7 +29,7 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
   const categoryName = isCommon
     ? categories?.find((c) => c.id === t.category_id)?.name ?? "Common expenses"
     : isCard
-    ? "Card spending"
+    ? categories?.find((c) => c.id === t.category_id)?.name ?? "Card spending"
     : categories?.find((c) => c.id === t.category_id)?.name ?? "Uncategorized";
   const nameOf = (id) => members?.find((m) => m.id === id)?.display_name;
   // Card spending is shown under the person it was spent for; say who logged it if that is someone else.
@@ -41,6 +42,7 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
   const net = t.net_usd != null ? Number(t.net_usd) : Number(t.amount) * Number(t.exchange_rate_to_base);
 
   async function startEdit() {
+    if (isCard) { setEditing(true); return; }   // card spends use their own small form
     setError(null);
     setBusy(true);
     try {
@@ -125,6 +127,15 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
     }
   }
 
+  if (editing && isCard) {
+    return (
+      <li className="txn-edit">
+        <CardSpendEditForm record={t} categories={categories} members={members}
+          onSaved={() => { setEditing(false); onChanged?.(); }} onCancel={() => setEditing(false)} />
+      </li>
+    );
+  }
+
   if (editing && f) {
     return (
       <li className="txn-edit">
@@ -170,7 +181,7 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
       {isCommon && <p className="txn-note">Family cost, doesn't count toward your limit.</p>}
       {canManage && !isCommon && (
         <div className="txn-actions">
-          {!isCard && <button type="button" disabled={busy} onClick={startEdit}>Edit</button>}
+          <button type="button" disabled={busy} onClick={startEdit}>Edit</button>
           <button type="button" className="remove-btn" disabled={busy} onClick={remove}>Delete</button>
         </div>
       )}

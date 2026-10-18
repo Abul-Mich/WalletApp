@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
+import CardSpendEditForm from "./CardSpendEditForm";
 import { deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
 import CardTopUpForm from "./CardTopUpForm";
 import CardWithdrawForm from "./CardWithdrawForm";
@@ -15,6 +16,7 @@ export default function CardDetailModal({
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null); // card spend being edited
   const [renaming, setRenaming] = useState(false);
   const [nameInput, setNameInput] = useState(card.name);
   const [savingCard, setSavingCard] = useState(false);
@@ -84,7 +86,11 @@ export default function CardDetailModal({
     loadHistory(PAGE_SIZE);
   }
 
-  // Edits are delete + re-enter: the ledger never rewrites a money movement.
+  // Spends can be edited (their person, category, amount, date, note); top-ups and family costs are deleted and re-entered.
+  function canEdit(r) {
+    return !card.archived && r.kind !== "topup" && r.kind !== "common" && (r.member_id === memberId || amAdmin);
+  }
+
   function canDelete(r) {
     if (r.kind === "topup" || r.kind === "common") return amAdmin;
     return r.member_id === memberId || amSuperadmin;
@@ -181,7 +187,7 @@ export default function CardDetailModal({
             <CardTopUpForm cardAccount={cardAccount} poolAccounts={poolAccounts} memberAccounts={memberAccounts} memberId={memberId} amAdmin={amAdmin} members={members} onDone={handleDone} />
           )}
           {!card.archived && tab === "withdraw" && (
-            <CardWithdrawForm familyId={familyId} memberId={memberId} members={members} categories={categories} amAdmin={amAdmin} card={card} cardAccount={cardAccount} onDone={handleDone} />
+            <CardWithdrawForm familyId={familyId} memberId={memberId} members={(members || []).filter((m) => !m.removed_at)} categories={categories || []} amAdmin={amAdmin} card={card} cards={[card]} accounts={{ pool: poolAccounts, members: memberAccounts, cards: { [card.id]: cardAccount } }} onDone={handleDone} />
           )}
 
           {!card.archived && tab === "towallet" && (
@@ -193,23 +199,29 @@ export default function CardDetailModal({
               {loading && <p className="hint">Loading...</p>}
               {!loading && history.length === 0 && <p className="hint">No activity yet.</p>}
               <ul className="txn-list">
-                {history.map((r) => (
+                {history.map((r) => editingId === r.id ? (
+                  <li key={`${r.kind}-${r.id}`} className="txn-edit">
+                    <CardSpendEditForm record={r} categories={categories} members={members}
+                      onSaved={() => { setEditingId(null); handleDone(); }} onCancel={() => setEditingId(null)} />
+                  </li>
+                ) : (
                   <li key={`${r.kind}-${r.id}`}>
                     <div>
                       <span className="txn-amount">
                         {r.sign > 0 ? "+" : "-"}{fmtMoney(r.kind === "topup" ? r.amount : r.amount, cur)}
                       </span>
                       <span className="txn-meta">
-                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : "Spent"}{sourceLabel(r)} ·{" "}
+                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : `Spent${categories?.find((c) => c.id === r.category_id) ? ` on ${categories.find((c) => c.id === r.category_id).name}` : ""}`}{sourceLabel(r)} ·{" "}
                         {members?.find((m) => m.id === r.member_id)?.display_name ?? "Unknown member"}
                         {r.tagged_member_id && r.tagged_member_id !== r.member_id &&
                           ` · for ${members?.find((m) => m.id === r.tagged_member_id)?.display_name ?? "a member"}`} · {fmtWhen(r.created_at)}
                       </span>
                     </div>
                     {r.note && <p className="txn-note">{r.note}</p>}
-                    {canDelete(r) && (
+                    {(canDelete(r) || canEdit(r)) && (
                       <div className="txn-actions">
-                        <button type="button" className="remove-btn" onClick={() => removeEntry(r)}>Delete</button>
+                        {canEdit(r) && <button type="button" onClick={() => setEditingId(r.id)}>Edit</button>}
+                        {canDelete(r) && <button type="button" className="remove-btn" onClick={() => removeEntry(r)}>Delete</button>}
                       </div>
                     )}
                   </li>
