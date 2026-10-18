@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
 import { deleteTransfer, deleteExchange, deleteDeposit, fmtMoney, fmtWhen } from "../lib/wallets";
 
@@ -14,6 +15,7 @@ export default function MoneyHistoryAdmin({ familyId, rawAccounts, members, card
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { ask, dialog } = useConfirm();
 
   const acctName = (id) => {
     const a = rawAccounts.find((x) => x.id === id);
@@ -58,19 +60,22 @@ export default function MoneyHistoryAdmin({ familyId, rawAccounts, members, card
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit, reloadTrigger]);
 
-  async function remove(r) {
-    const what = r.kind === "deposit" ? "deposit" : "entry";
-    if (!confirm(`Delete this ${what}? Balances will be recalculated.`)) return;
-    try {
-      if (r.kind === "transfer") await deleteTransfer(r.id);
-      else if (r.kind === "exchange") await deleteExchange(r.id);
-      else await deleteDeposit(r.id);
-      setLimit(PAGE_SIZE);
-      load(PAGE_SIZE);
-      onChanged?.();
-    } catch (err) {
-      setError(err.message);
-    }
+  function remove(r) {
+    const what = r.kind === "deposit" ? "deposit" : r.kind === "exchange" ? "exchange" : "transfer";
+    ask({
+      title: `Delete this ${what}?`,
+      detail: r.kind === "deposit" ? "Money added to the pool" : undefined,
+      effect: "The balances are recalculated as if it never happened. This cannot be undone.",
+      confirmLabel: `Delete ${what}`, cancelLabel: "Keep it", icon: "trash",
+      onConfirm: async () => {
+        if (r.kind === "transfer") await deleteTransfer(r.id);
+        else if (r.kind === "exchange") await deleteExchange(r.id);
+        else await deleteDeposit(r.id);
+        setLimit(PAGE_SIZE);
+        load(PAGE_SIZE);
+        onChanged?.();
+      },
+    });
   }
 
   const amountOf = (r) => {
@@ -110,6 +115,7 @@ export default function MoneyHistoryAdmin({ familyId, rawAccounts, members, card
           {loading ? "Loading..." : "Load 20 more"}
         </button>
       )}
+      {dialog}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
 import { setMemberLimit, setRole, removeMember as removeMemberRpc } from "../lib/wallets";
 import { formatUsd } from "../lib/format";
@@ -13,6 +14,7 @@ export default function AdminSettings({
   myMemberId,
   onDone,
 }) {
+  const { ask, dialog } = useConfirm();
   const [limitEdits, setLimitEdits] = useState({}); // memberId -> { amount, period }
   const [catEdits, setCatEdits] = useState({}); // categoryId -> { amount, period }
   const [familyBudget, setFamilyBudget] = useState({
@@ -196,18 +198,17 @@ export default function AdminSettings({
     }
   }
 
-  async function removeMember(member) {
-    if (!confirm(`Remove ${member.display_name} from the family?`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await removeMemberRpc(member.id);
-      onDone?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
+  function removeMember(member) {
+    ask({
+      title: `Remove ${member.display_name}?`,
+      detail: "They will no longer see the family or add spending.",
+      effect: "Their past spending stays in the history and statistics. A member can only be removed once their wallets are empty, so move any money back to the pool first.",
+      confirmLabel: `Remove ${member.display_name}`, cancelLabel: "Keep them", icon: "person",
+      onConfirm: async () => {
+        await removeMemberRpc(member.id);
+        onDone?.();
+      },
+    });
   }
 
   return (
@@ -506,6 +507,7 @@ export default function AdminSettings({
       )}
 
       {error && <p className="status error">{error}</p>}
+      {dialog}
     </div>
   );
 }

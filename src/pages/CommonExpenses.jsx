@@ -4,8 +4,11 @@ import {
   deleteCommonExpense, updateCommonExpense, createCommonBill, deleteCommonBill, payCommonBill,
   latestLbpRate, periodStart, bal,
 } from "../lib/wallets";
-import { formatUsd, formatMoney, formatDate, formatDateTime, formatRate, parseNumber } from "../lib/format";
+import { formatUsd, formatMoney, formatDate, formatDateTime, formatRate, parseNumber, convertAmountText } from "../lib/format";
 import { MoneyInput, TextInput, SelectInput } from "../components/Field";
+import { useConfirm } from "../components/ConfirmSheet";
+import AmountHero from "../components/AmountHero";
+import { CategoryChips, PersonChips, DateNote, ImpactCard, EditSheet, signed } from "../components/RecordFields";
 
 const BILLS_SHOWN = 5;
 
@@ -44,6 +47,7 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
   const [bills, setBills] = useState([]);
   const [monthStart, setMonthStart] = useState(null);
   const [rate, setRate] = useState("");
+  const { ask, dialog } = useConfirm();
   const [showAllBills, setShowAllBills] = useState(false);
   const [mode, setMode] = useState(null); // null | 'bill'
   const [paying, setPaying] = useState(null); // bill being paid
@@ -98,26 +102,32 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
     onChanged?.();
   }
 
-  async function remove(e) {
-    if (!confirm(`Delete "${e.title}"? The money goes back to ${sourceName(e.account_id) ?? "the family pool"}.`)) return;
-    setError(null);
-    try {
-      await deleteCommonExpense(e.id);
-      done();
-    } catch (err) {
-      setError(err.message);
-    }
+  function remove(e) {
+    const back = sourceName(e.account_id) ?? "the family pool";
+    ask({
+      title: "Delete this family cost?",
+      detail: `${e.title} · ${formatMoney(e.amount, e.currency)}`,
+      effect: `The money goes back to ${back}, and the family budget and statistics are recalculated. This cannot be undone.`,
+      confirmLabel: "Delete family cost", cancelLabel: "Keep it", icon: "trash",
+      onConfirm: async () => {
+        setError(null);
+        await deleteCommonExpense(e.id);
+        done();
+      },
+    });
   }
 
-  async function removeBill(b) {
-    if (!confirm(`Delete the bill "${b.name}"? Payments already made stay in the list.`)) return;
-    setError(null);
-    try {
-      await deleteCommonBill(b.id);
-      done();
-    } catch (err) {
-      setError(err.message);
-    }
+  function removeBill(b) {
+    ask({
+      title: `Delete the bill "${b.name}"?`,
+      effect: "Payments already made stay in the list. Only the reminder is removed.",
+      confirmLabel: "Delete bill", cancelLabel: "Keep it", icon: "trash",
+      onConfirm: async () => {
+        setError(null);
+        await deleteCommonBill(b.id);
+        done();
+      },
+    });
   }
 
   return (
@@ -204,6 +214,7 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
           onClose={() => setShowHistory(false)}
         />
       )}
+      {dialog}
     </section>
   );
 }
@@ -212,8 +223,8 @@ function ExpenseRow({ e, name, catName, sourceName, amAdmin, onRemove, env }) {
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
-      <li className="txn-edit">
-        <CommonExpenseEditForm record={e} {...env} onSaved={() => { setEditing(false); env.onChanged(); }} onCancel={() => setEditing(false)} />
+      <li className="txn-edit-host">
+        <CommonExpenseEditForm record={e} {...env} onSaved={() => { setEditing(false); env.onChanged(); }} onCancel={() => setEditing(false)} onDelete={() => onRemove(e)} />
       </li>
     );
   }
@@ -239,46 +250,95 @@ function ExpenseRow({ e, name, catName, sourceName, amAdmin, onRemove, env }) {
   );
 }
 
-// Change a common expense: what it was for, amount, currency, category, person, date, note, and where it is paid from.
+// Change a family cost: what it was for, amount, currency, category, person, date, note, and where it is paid from.
 function toLocalInput(iso) {
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function CommonExpenseEditForm({ record, members, categories, cards, accounts, onSaved, onCancel }) {
+const numOf = (v) => {
+  const n = parseNumber(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+function CommonExpenseEditForm({ record, members, categories, cards, accounts, onSaved, onCancel, onDelete }) {
+  const oldWhen = toLocalInput(record.created_at);
+  const oldAmount = Number(record.amount);
+  const oldNet = Math.abs(Number(record.net_usd));
   const [title, setTitle] = useState(record.title);
-  const [amount, setAmount] = useState(String(Number(record.amount)));
+  const [amount, setAmount] = useState(String(oldAmount));
   const [currency, setCurrency] = useState(record.currency);
   const [rate, setRate] = useState(record.lbp_per_usd ? String(Math.round(Number(record.lbp_per_usd))) : "");
   const [categoryId, setCategoryId] = useState(record.category_id ?? "");
   const [tag, setTag] = useState(record.tagged_member_id ?? "");
-  const [when, setWhen] = useState(toLocalInput(record.created_at));
+  const [when, setWhen] = useState(oldWhen);
   const [note, setNote] = useState(record.note ?? "");
-  const [accountId, setAccountId] = useState(record.account_id);
+  const [accountId, setAccountId] = useState(record.account_id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  // Cards that can pay in this currency, plus the one it is paid from now (even if archived).
-  const options = cardOptions(cards, accounts, currency);
-  const currentCard = (cards || []).find((k) => accounts.cards[k.id]?.id === record.account_id);
-  if (currentCard && currency === record.currency && !options.some((o) => o.id === record.account_id)) {
-    options.push({ id: record.account_id, label: `${currentCard.name} (${formatMoney(bal(accounts.cards[currentCard.id]), currency)})` });
+  // A USD expense has no rate of its own: offer the family's latest one if it is switched to LBP.
+  useEffect(() => {
+    if (!rate) latestLbpRate(record.family_id).then((r) => r && setRate(String(Math.round(Number(r)))));
+  }, [record.family_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rateNum = numOf(rate);
+
+  // Switching currency keeps the value: the amount is converted at the rate shown.
+  function changeCurrency(c) {
+    if (c === currency) return;
+    setAmount(convertAmountText(amount, currency, c, rateNum));
+    setCurrency(c);
   }
-  const chosen = options.some((o) => o.id === accountId) ? accountId : "";
+
+  // Where it can be paid from in this currency: the pool, active cards, and the current card even if archived.
+  const sources = [{ id: "", name: "Family pool", balance: bal(accounts.pool?.[currency]), cur: currency }];
+  for (const k of cards || []) {
+    const a = accounts.cards[k.id];
+    if (!a || a.currency !== currency) continue;
+    if (k.archived && a.id !== record.account_id) continue;
+    sources.push({ id: a.id, name: k.name, balance: bal(a), cur: currency });
+  }
+  const chosen = sources.some((o) => o.id === accountId) ? accountId : "";
+  const oldSourceName = record.account_id
+    ? (cards || []).find((k) => accounts.cards[k.id]?.id === record.account_id)?.name ?? "the card"
+    : "Family pool";
+  const newSourceName = sources.find((o) => o.id === chosen)?.name ?? "Family pool";
+
+  const n = numOf(amount);
+  const newNet = currency === "USD" ? n : rateNum ? n / rateNum : 0;
+  const sameSource = chosen === (record.account_id ?? "") && currency === record.currency;
+  const changed =
+    title !== record.title || Math.abs(n - oldAmount) > 1e-9 || currency !== record.currency ||
+    (currency === "LBP" && Math.abs(rateNum - Number(record.lbp_per_usd || 0)) > 0.5) ||
+    categoryId !== (record.category_id ?? "") || tag !== (record.tagged_member_id ?? "") ||
+    when !== oldWhen || note !== (record.note ?? "") || chosen !== (record.account_id ?? "");
+
+  const rows = [];
+  if (n > 0) {
+    if (sameSource) {
+      if (Math.abs(n - oldAmount) > 1e-9) rows.push({ name: `${newSourceName} balance`, value: signed(oldAmount - n, (v) => formatMoney(v, currency)) });
+    } else {
+      rows.push({ name: `${oldSourceName} gets back`, value: formatMoney(oldAmount, record.currency) });
+      rows.push({ name: `${newSourceName} pays`, value: formatMoney(n, currency) });
+    }
+    if (newNet > 0 && Math.abs(newNet - oldNet) > 0.004) rows.push({ name: "Family budget this month", value: signed(newNet - oldNet, formatUsd) });
+  }
 
   async function save(ev) {
     ev.preventDefault();
-    const n = parseNumber(amount);
     if (!(n > 0)) return setError("Enter an amount.");
-    if (currency === "LBP" && !(parseNumber(rate) > 0)) return setError("Enter the exchange rate (LBP per $1).");
+    if (!title.trim()) return setError("Enter what the family cost was for.");
+    if (currency === "LBP" && !(rateNum > 0)) return setError("Enter the exchange rate (LBP per $1).");
+    if (when && new Date(when) > new Date()) return setError("The date cannot be in the future.");
     setBusy(true);
     setError(null);
     try {
       await updateCommonExpense({
         id: record.id, title, amount: n, currency, categoryId, note, taggedMemberId: tag,
         accountId: chosen,
-        lbpPerUsd: currency === "LBP" ? parseNumber(rate) : null,
+        lbpPerUsd: currency === "LBP" ? rateNum : null,
         createdAt: when ? new Date(when).toISOString() : null,
       });
       onSaved();
@@ -288,39 +348,51 @@ function CommonExpenseEditForm({ record, members, categories, cards, accounts, o
     }
   }
 
+  const people = [{ value: "", label: "Nobody" }, ...(members || []).filter((m) => !m.removed_at || m.id === tag).map((m) => ({ value: m.id, label: m.display_name }))];
+
   return (
-    <form onSubmit={save} className="form-stack">
-      <TextInput label="What for" value={title} onChange={setTitle} required />
-      <div className="grid">
-        <MoneyInput label="Amount" unit={currency} value={amount} onChange={setAmount} placeholder="0" required />
-        <SelectInput label="Currency" value={currency} onChange={setCurrency}>
-          <option value="USD">US dollars (USD)</option>
-          <option value="LBP">Lebanese pounds (LBP)</option>
-        </SelectInput>
-      </div>
-      {currency === "LBP" && (
-        <MoneyInput label="Exchange rate" unit="LBP/USD" value={rate} onChange={setRate} placeholder="89,500" required
-          help={parseNumber(rate) > 0 ? formatRate(parseNumber(rate)) : "How many LBP equal $1 today"} />
-      )}
-      <div className="grid">
-        <SelectInput label="Category" value={categoryId} onChange={setCategoryId}>
-          <option value="">No category</option>
-          {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-        </SelectInput>
-        <SelectInput label="For (optional)" value={tag} onChange={setTag}>
-          <option value="">The whole family</option>
-          {members.filter((m) => !m.removed_at || m.id === tag).map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
-        </SelectInput>
-      </div>
-      <PaidFrom value={chosen} onChange={setAccountId} options={options} />
-      <TextInput label="Date and time" type="datetime-local" value={when} onChange={setWhen} />
-      <TextInput label="Note" value={note} onChange={setNote} placeholder="Optional" />
-      <div className="form-actions">
-        <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving..." : "Save"}</button>
-        <button type="button" className="btn btn-secondary" disabled={busy} onClick={onCancel}>Cancel</button>
-      </div>
-      {error && <p className="status error">{error}</p>}
-    </form>
+    <EditSheet title="Edit family cost" onClose={busy ? undefined : onCancel}>
+      <form onSubmit={save} className="spend-form">
+        <div className="sf-scroll">
+          <AmountHero value={amount} onChange={setAmount} currency={currency} onCurrency={changeCurrency} autoFocus={false}>
+            {(Math.abs(n - oldAmount) > 1e-9 || currency !== record.currency) && (
+              <span className="sf-muted sf-small">Was {formatMoney(oldAmount, record.currency)}{currency === "LBP" && newNet > 0 ? ` · now about ${formatUsd(newNet)}` : ""}</span>
+            )}
+          </AmountHero>
+
+          {currency === "LBP" && (
+            <MoneyInput label="Exchange rate (LBP per $1)" value={rate} onChange={setRate} placeholder="89,500" required
+              help={rateNum ? formatRate(rateNum) : "How many LBP equal $1 today"} />
+          )}
+
+          <TextInput label="What for" value={title} onChange={setTitle} required />
+
+          <div className="sf-block">
+            <span className="sf-label">Paid from</span>
+            <div className="sf-boxes">
+              {sources.map((o) => (
+                <button key={o.id || "pool"} type="button" className={`sf-box ${chosen === o.id ? "on" : ""}`} aria-pressed={chosen === o.id} onClick={() => setAccountId(o.id)}>
+                  <strong>{o.name}</strong><span>{formatMoney(o.balance, o.cur)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <PersonChips label="Related person" hint="(optional)" value={tag} onChange={setTag} options={people} />
+          <CategoryChips categories={categories || []} value={categoryId} onChange={setCategoryId} allowNone />
+          <ImpactCard rows={changed ? rows : []} />
+          <DateNote when={when} onWhen={setWhen} note={note} onNote={setNote} />
+          {error && <p className="status error" role="alert">{error}</p>}
+        </div>
+
+        <div className="sf-footer sf-footer-stack">
+          <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !changed || !(n > 0)}>
+            {busy ? "Saving..." : changed ? "Save changes" : "No changes yet"}
+          </button>
+          {onDelete && <button type="button" className="sf-delete" disabled={busy} onClick={onDelete}>Delete this family cost</button>}
+        </div>
+      </form>
+    </EditSheet>
   );
 }
 
@@ -374,21 +446,52 @@ function HistorySheet({ familyId, name, catName, sourceName, amAdmin, onRemove, 
   );
 }
 
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function dueChoices() {
+  const today = new Date();
+  const week = new Date(today); week.setDate(week.getDate() + 7);
+  const month = new Date(today.getFullYear(), today.getMonth() + 1, Math.min(today.getDate(), 28));
+  return [
+    { key: "today", label: "Today", value: ymd(today) },
+    { key: "week", label: "In a week", value: ymd(week) },
+    { key: "month", label: "Next month", value: ymd(month) },
+  ];
+}
+
+// A new bill: the hero is the usual amount. Due date has quick choices and a date picker.
 function BillForm({ familyId, members, categories, onDone, onCancel }) {
+  const choices = dueChoices();
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
+  const [rate, setRate] = useState("");
   const [recurrence, setRecurrence] = useState("monthly");
-  const [due, setDue] = useState(() => new Date().toISOString().slice(0, 10));
+  const [due, setDue] = useState(choices[1].value);
+  const [pickDate, setPickDate] = useState(false);
   const [categoryId, setCategoryId] = useState("");
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    latestLbpRate(familyId).then((r) => r && setRate(String(Math.round(Number(r)))));
+  }, [familyId]);
+
+  function changeCurrency(c) {
+    if (c === currency) return;
+    setAmount(convertAmountText(amount, currency, c, numOf(rate)));
+    setCurrency(c);
+  }
+
+  const n = numOf(amount);
+  const repeatWord = { monthly: "every month", weekly: "every week", one_time: "once" }[recurrence];
+  const dueLabel = new Date(`${due}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
   async function submit(e) {
     e.preventDefault();
-    const n = parseNumber(amount);
+    if (!name.trim()) return setError("Give the bill a name.");
     if (!(n > 0)) return setError("Enter the usual amount.");
+    if (!due) return setError("Choose the next due date.");
     setBusy(true);
     setError(null);
     try {
@@ -396,86 +499,120 @@ function BillForm({ familyId, members, categories, onDone, onCancel }) {
       onDone();
     } catch (err) {
       setError(err.message);
-    } finally {
       setBusy(false);
     }
   }
 
+  const people = [{ value: "", label: "Whole family" }, ...(members || []).map((m) => ({ value: m.id, label: m.display_name }))];
+
   return (
-    <form onSubmit={submit} className="form-stack group" style={{ marginBottom: 12 }}>
-      <h4>New recurring bill</h4>
-      <TextInput label="Name" value={name} onChange={setName} placeholder="Internet, electricity, tuition..." required />
-      <div className="grid">
-        <MoneyInput label="Usual amount" unit={currency} value={amount} onChange={setAmount} placeholder="0" required help="You can change it when you pay" />
-        <SelectInput label="Currency" value={currency} onChange={setCurrency}>
-          <option value="USD">US dollars (USD)</option>
-          <option value="LBP">Lebanese pounds (LBP)</option>
-        </SelectInput>
-      </div>
-      <div className="grid">
-        <SelectInput label="Repeats" value={recurrence} onChange={setRecurrence}>
-          <option value="monthly">Every month</option>
-          <option value="weekly">Every week</option>
-          <option value="one_time">One time</option>
-        </SelectInput>
-        <TextInput label="Next due date" type="date" value={due} onChange={setDue} required />
-      </div>
-      <div className="grid">
-        <SelectInput label="Category" value={categoryId} onChange={setCategoryId}>
-          <option value="">No category</option>
-          {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-        </SelectInput>
-        <SelectInput label="For (optional)" value={tag} onChange={setTag}>
-          <option value="">The whole family</option>
-          {members.map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
-        </SelectInput>
-      </div>
-      <div className="form-actions">
-        <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving..." : "Add bill"}</button>
-        <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-      </div>
-      {error && <p className="status error">{error}</p>}
-    </form>
+    <EditSheet title="Add a bill" onClose={busy ? undefined : onCancel}>
+      <form onSubmit={submit} className="spend-form">
+        <div className="sf-scroll">
+          <TextInput label="Name" value={name} onChange={setName} placeholder="Internet, electricity, tuition..." required />
+          <AmountHero value={amount} onChange={setAmount} currency={currency} onCurrency={changeCurrency} autoFocus={false}>
+            <span className="sf-muted sf-small">Usual amount. You can change it each time you pay.</span>
+          </AmountHero>
+
+          <div className="sf-block">
+            <span className="sf-label">Repeats</span>
+            <div className="sf-seg" role="group" aria-label="Repeats">
+              {[["monthly", "Every month"], ["weekly", "Every week"], ["one_time", "One time"]].map(([k, l]) => (
+                <button key={k} type="button" className={recurrence === k ? "on" : ""} aria-pressed={recurrence === k} onClick={() => setRecurrence(k)}>{l}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="sf-block">
+            <span className="sf-label">Next due</span>
+            <div className="sf-chips">
+              {choices.map((c) => (
+                <button key={c.key} type="button" className={`sf-chip ${!pickDate && due === c.value ? "on" : ""}`} aria-pressed={!pickDate && due === c.value} onClick={() => { setPickDate(false); setDue(c.value); }}>{c.label}</button>
+              ))}
+              <button type="button" className={`sf-chip ${pickDate ? "on" : ""}`} aria-pressed={pickDate} onClick={() => setPickDate(true)}>Pick date</button>
+            </div>
+            {pickDate ? <TextInput label="" type="date" value={due} onChange={setDue} required /> : <span className="sf-muted sf-small" style={{ marginTop: 8 }}>{dueLabel}</span>}
+          </div>
+
+          <CategoryChips categories={categories || []} value={categoryId} onChange={setCategoryId} allowNone />
+          <PersonChips label="For" hint="(optional)" value={tag} onChange={setTag} options={people} />
+          {error && <p className="status error" role="alert">{error}</p>}
+        </div>
+        <div className="sf-footer">
+          <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !name.trim() || !(n > 0)}>
+            {busy ? "Saving..." : n > 0 ? `Add bill · ${formatMoney(n, currency)} ${repeatWord}` : "Enter a name and amount"}
+          </button>
+        </div>
+      </form>
+    </EditSheet>
   );
 }
 
-// Pay a bill from the pool. The amount starts as the usual one; change it if this month's bill differs.
+// Pay a bill. The amount starts as the usual one; change it if this month's bill differs.
 function PayForm({ bill, cards, accounts, defaultRate, onDone, onCancel }) {
-  const [amount, setAmount] = useState(String(bill.amount));
+  const cur = bill.currency;
+  const [amount, setAmount] = useState(String(Number(bill.amount)));
   const [rate, setRate] = useState(defaultRate);
   const [accountId, setAccountId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const options = cardOptions(cards, accounts, bill.currency);
+
+  const sources = [{ id: "", name: "Family pool", balance: bal(accounts.pool?.[cur]) }];
+  for (const k of cards || []) {
+    const a = accounts.cards[k.id];
+    if (a && !k.archived && a.currency === cur) sources.push({ id: a.id, name: k.name, balance: bal(a) });
+  }
+  const chosen = sources.find((o) => o.id === accountId) || sources[0];
+  const n = numOf(amount);
+  const rateNum = numOf(rate);
+  const over = n > chosen.balance + 1e-9;
+  const needsRate = cur === "LBP";
+  const valid = n > 0 && !over && (!needsRate || rateNum > 0);
 
   async function submit(e) {
     e.preventDefault();
-    const n = parseNumber(amount);
-    if (!(n > 0)) return setError("Enter an amount.");
+    if (!valid) return;
     setBusy(true);
     setError(null);
     try {
-      await payCommonBill({ billId: bill.id, amount: n, accountId, lbpPerUsd: bill.currency === "LBP" ? parseNumber(rate) : null });
+      await payCommonBill({ billId: bill.id, amount: n, accountId: chosen.id, lbpPerUsd: needsRate ? rateNum : null });
       onDone();
     } catch (err) {
       setError(err.message);
-    } finally {
       setBusy(false);
     }
   }
 
+  const label = over ? `Not enough in ${chosen.name}` : valid ? `Pay ${formatMoney(n, cur)} from ${chosen.id ? chosen.name : "pool"}` : needsRate && n > 0 ? "Enter the exchange rate" : "Enter an amount";
+
   return (
-    <form onSubmit={submit} className="form-stack" style={{ marginTop: 10 }}>
-      <div className="grid">
-        <MoneyInput label={`Amount this time`} unit={bill.currency} value={amount} onChange={setAmount} required />
-        {bill.currency === "LBP" && <MoneyInput label="Exchange rate" unit="LBP/USD" value={rate} onChange={setRate} required />}
-      </div>
-      <PaidFrom value={accountId} onChange={setAccountId} options={options} />
-      <div className="form-actions">
-        <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Paying..." : accountId ? "Pay from card" : "Pay from pool"}</button>
-        <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-      </div>
-      {error && <p className="status error">{error}</p>}
-    </form>
+    <EditSheet title={`Pay ${bill.name}`} onClose={busy ? undefined : onCancel}>
+      <form onSubmit={submit} className="spend-form">
+        <div className="sf-scroll">
+          <AmountHero value={amount} onChange={setAmount} currency={cur} autoFocus={false}>
+            <span className="sf-muted sf-small">Usual amount: {formatMoney(Number(bill.amount), cur)}</span>
+            {needsRate && n > 0 && rateNum > 0 && <span className="sf-muted sf-small">≈ {formatUsd(n / rateNum)} at {Math.round(rateNum).toLocaleString("en-US")}</span>}
+          </AmountHero>
+          {needsRate && (
+            <MoneyInput label="Exchange rate (LBP per $1)" value={rate} onChange={setRate} placeholder="89,500" required
+              help={rateNum ? formatRate(rateNum) : "How many LBP equal $1 today"} />
+          )}
+          <div className="sf-block">
+            <span className="sf-label">Pay from</span>
+            <div className="sf-boxes">
+              {sources.map((o) => (
+                <button key={o.id || "pool"} type="button" className={`sf-box ${chosen.id === o.id ? "on" : ""}`} aria-pressed={chosen.id === o.id} onClick={() => setAccountId(o.id)}>
+                  <strong>{o.name}</strong><span>{formatMoney(o.balance, cur)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {error && <p className="status error" role="alert">{error}</p>}
+        </div>
+        <div className="sf-footer">
+          <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !valid}>{busy ? "Paying..." : label}</button>
+        </div>
+      </form>
+    </EditSheet>
   );
 }

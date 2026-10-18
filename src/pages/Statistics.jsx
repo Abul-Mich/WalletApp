@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import "../styles/statistics.css";
 import "../styles/statistics-extra.css";
+import { makeColorFor } from "../lib/categoryColors";
 
 // ---------- Beirut calendar helpers (the family's day boundaries) ----------
 const TZ = "Asia/Beirut";
@@ -63,8 +64,6 @@ function rangeFor(preset, customStart, customEnd) {
 }
 
 // ---------- chart colors: validated categorical palette, fixed order ----------
-const SERIES = ["var(--viz-1)", "var(--viz-2)", "var(--viz-3)", "var(--viz-4)", "var(--viz-5)", "var(--viz-6)", "var(--viz-7)", "var(--viz-8)"];
-const EXTRA_CATEGORIES = ["Card spending", "Common expenses", "Uncategorized"];
 
 // Every amount here is net USD (the figure that counts toward limits).
 const usd = (t) =>
@@ -144,13 +143,7 @@ export default function Statistics({ familyId }) {
     (g.kind === "card" ? "Card spending" : g.kind === "common" ? "Common expenses" : "Uncategorized");
 
   // Stable color per category name (order of the family's categories, then the built-in ones).
-  const colorFor = useMemo(() => {
-    const order = [...categories.map((c) => c.name).sort((a, b) => a.localeCompare(b)), ...EXTRA_CATEGORIES];
-    return (name) => {
-      const i = order.indexOf(name);
-      return i >= 0 && i < SERIES.length ? SERIES[i] : "var(--viz-other)";
-    };
-  }, [categories]);
+  const colorFor = useMemo(() => makeColorFor(categories), [categories]);
 
   const stats = useMemo(() => {
     const total = Number(rollup.total);

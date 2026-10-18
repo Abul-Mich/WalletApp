@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
 import CardSpendEditForm from "./CardSpendEditForm";
 import { deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
@@ -22,6 +23,7 @@ export default function CardDetailModal({
   const [savingCard, setSavingCard] = useState(false);
   const [cardError, setCardError] = useState(null);
   const cur = cardAccount.currency;
+  const { ask, dialog } = useConfirm();
 
   async function loadHistory(nextLimit) {
     setLoading(true);
@@ -96,16 +98,20 @@ export default function CardDetailModal({
     return r.member_id === memberId || amSuperadmin;
   }
 
-  async function removeEntry(r) {
-    if (!confirm("Delete this entry? The card balance will be recalculated.")) return;
-    try {
-      if (r.kind === "topup") await deleteTransfer(r.id);
-      else if (r.kind === "common") await deleteCommonExpense(r.id);
-      else await deleteCardSpend(r.id);
-      handleDone();
-    } catch (err) {
-      alert(err.message);
-    }
+  function removeEntry(r) {
+    const what = r.kind === "topup" ? "top-up" : r.kind === "common" ? "family cost" : "spending";
+    ask({
+      title: `Delete this ${what}?`,
+      detail: `${fmtMoney(r.amount, cur)} on ${card.name}`,
+      effect: "The card balance is recalculated, and the money goes back to where it came from. This cannot be undone.",
+      confirmLabel: `Delete ${what}`, cancelLabel: "Keep it", icon: "trash",
+      onConfirm: async () => {
+        if (r.kind === "topup") await deleteTransfer(r.id);
+        else if (r.kind === "common") await deleteCommonExpense(r.id);
+        else await deleteCardSpend(r.id);
+        handleDone();
+      },
+    });
   }
 
   async function saveRename() {
@@ -125,9 +131,19 @@ export default function CardDetailModal({
     }
   }
 
-  async function toggleArchived() {
+  function toggleArchived() {
     const next = !card.archived;
-    if (next && !confirm(`Archive "${card.name}"? No more top-ups or spending will be allowed, but its balance and history stay visible.`)) return;
+    if (!next) return applyArchived(false);
+    ask({
+      title: `Archive ${card.name}?`,
+      detail: `Balance ${fmtMoney(cardAccount.balance_cache, cur)}`,
+      effect: "No more top-ups or spending on this card. Its balance and history stay visible, and you can unarchive it any time.",
+      confirmLabel: "Archive card", cancelLabel: "Cancel", icon: "archive", danger: false,
+      onConfirm: () => applyArchived(true, true),
+    });
+  }
+
+  async function applyArchived(next, rethrow = false) {
     setSavingCard(true);
     setCardError(null);
     try {
@@ -138,6 +154,7 @@ export default function CardDetailModal({
     } catch (err) {
       setCardError(err.message);
       setSavingCard(false);
+      if (rethrow) throw err;
     }
   }
 
@@ -200,9 +217,10 @@ export default function CardDetailModal({
               {!loading && history.length === 0 && <p className="hint">No activity yet.</p>}
               <ul className="txn-list">
                 {history.map((r) => editingId === r.id ? (
-                  <li key={`${r.kind}-${r.id}`} className="txn-edit">
-                    <CardSpendEditForm record={r} categories={categories} members={members}
-                      onSaved={() => { setEditingId(null); handleDone(); }} onCancel={() => setEditingId(null)} />
+                  <li key={`${r.kind}-${r.id}`} className="txn-edit-host">
+                    <CardSpendEditForm record={r} categories={categories} members={members} cardName={card.name}
+                      onSaved={() => { setEditingId(null); handleDone(); }} onCancel={() => setEditingId(null)}
+                      onDelete={canDelete(r) ? () => removeEntry(r) : undefined} />
                   </li>
                 ) : (
                   <li key={`${r.kind}-${r.id}`}>
@@ -236,6 +254,7 @@ export default function CardDetailModal({
           )}
         </div>
       </div>
+      {dialog}
     </div>
   );
 }

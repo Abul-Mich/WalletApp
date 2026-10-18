@@ -32,15 +32,14 @@ export default function MyWalletsCard({ memberId, accounts, wallets, onChanged }
         <div className="sheet-backdrop" onClick={() => setOpen(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
             <div className="sheet-handle" />
-            <div className="sheet-header">
-              <h2>My wallets</h2>
+            <div className="sf-sheet-head">
+              <div className="sf-tabs" role="tablist">
+                <button type="button" role="tab" aria-selected={tab === "take"} className={tab === "take" ? "on" : ""} onClick={() => setTab("take")}>Take from pool</button>
+                <button type="button" role="tab" aria-selected={tab === "return"} className={tab === "return" ? "on" : ""} onClick={() => setTab("return")}>Return to pool</button>
+              </div>
               <button type="button" className="sheet-close" aria-label="Close" onClick={() => setOpen(false)}>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
               </button>
-            </div>
-            <div className="sheet-tabs">
-              <button type="button" className={`sheet-tab ${tab === "take" ? "active" : ""}`} onClick={() => setTab("take")}>Take from pool</button>
-              <button type="button" className={`sheet-tab ${tab === "return" ? "active" : ""}`} onClick={() => setTab("return")}>Return to pool</button>
             </div>
             <div className="sheet-body">
               {tab === "take" && <MemberBalanceTransfer memberId={memberId} accounts={accounts} onDone={done} />}

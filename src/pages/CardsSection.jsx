@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { createCard, fmtMoney } from "../lib/wallets";
 import CardDetailModal from "./CardDetailModal";
+import { EditSheet } from "../components/RecordFields";
+import { TextInput } from "../components/Field";
 
 export default function CardsSection({
   familyId, memberId, cards, accounts, members, categories, amAdmin, amSuperadmin, onChanged,
@@ -46,15 +48,28 @@ export default function CardsSection({
       </div>
 
       {showNewCard && (
-        <form onSubmit={handleCreate} className="inline-form">
-          <input placeholder="Card name (e.g. Fuel Card)" value={name} onChange={(e) => setName(e.target.value)} required />
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            <option value="USD">USD card</option>
-            <option value="LBP">LBP card</option>
-          </select>
-          <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Creating..." : "Create card"}</button>
-          {error && <p className="status error">{error}</p>}
-        </form>
+        <EditSheet title="New card" onClose={busy ? undefined : () => setShowNewCard(false)}>
+          <form onSubmit={handleCreate} className="spend-form">
+            <div className="sf-scroll">
+              <TextInput label="Card name" value={name} onChange={setName} placeholder="Fuel Card, Trip Card..." required />
+              <div className="sf-block">
+                <span className="sf-label">Currency</span>
+                <div className="sf-seg" role="group" aria-label="Card currency">
+                  {["USD", "LBP"].map((c) => (
+                    <button key={c} type="button" className={currency === c ? "on" : ""} aria-pressed={currency === c} onClick={() => setCurrency(c)}>{c} card</button>
+                  ))}
+                </div>
+                <span className="sf-muted sf-small" style={{ marginTop: 8 }}>A card holds one currency. You cannot change it later. Top it up from the pool or a wallet after creating it.</span>
+              </div>
+              {error && <p className="status error" role="alert">{error}</p>}
+            </div>
+            <div className="sf-footer">
+              <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !name.trim()}>
+                {busy ? "Creating..." : name.trim() ? `Create ${name.trim()} (${currency})` : "Enter a card name"}
+              </button>
+            </div>
+          </form>
+        </EditSheet>
       )}
 
       {activeCards.length === 0 && !showNewCard && <p className="hint">No shared cards yet.</p>}

@@ -149,11 +149,35 @@ do $$ declare s record; c record; r common_expenses; d deposits; lp0 numeric; up
 end $$;
 insert into tres (test) values ('LBP and currency changes');
 
+-- statistics follow a currency change (the rollup always reads the recomputed net_usd)
+do $$ declare s record; r common_expenses; t0 numeric; ro jsonb; parts numeric; begin
+  select * into s from start_state;
+  perform t.as_user('superadmin'); set local role authenticated;
+  t0 := (spend_rollup(s.fam)->>'total')::numeric;
+  r := create_common_expense(s.fam, 'Stats switch', 900000, 'LBP', null, 90000);                     -- $10
+  perform t.need(abs((spend_rollup(s.fam)->>'total')::numeric - (t0 + 10)) < 0.001, 'rollup after LBP create');
+  r := update_common_expense(r.id, 'Stats switch', 12, 'USD');                                         -- LBP -> USD, $12
+  ro := spend_rollup(s.fam);
+  perform t.need(abs((ro->>'total')::numeric - (t0 + 12)) < 0.001, 'rollup after LBP to USD');
+  perform t.need(r.lbp_per_usd is null and r.net_usd = 12, 'USD record keeps no rate');
+  r := update_common_expense(r.id, 'Stats switch', 1080000, 'LBP', null, 90000);                      -- USD -> LBP at 90000 = $12
+  ro := spend_rollup(s.fam);
+  perform t.need(abs((ro->>'total')::numeric - (t0 + 12)) < 0.001 and r.net_usd = 12 and r.lbp_per_usd = 90000, 'rollup after USD to LBP');
+  select coalesce(sum((x->>'total')::numeric),0) into parts from jsonb_array_elements(ro->'categories') x;
+  perform t.need(abs(parts - (ro->>'total')::numeric) < 0.001, 'categories add up to total');
+  select coalesce(sum((x->>'total')::numeric),0) into parts from jsonb_array_elements(ro->'daily') x;
+  perform t.need(abs(parts - (ro->>'total')::numeric) < 0.001, 'days add up to total');
+  select coalesce(sum((x->>'total')::numeric),0) into parts from jsonb_array_elements(ro->'people') x;
+  perform t.need(abs(parts - (ro->>'total')::numeric) < 0.001, 'people add up to total');
+  reset role;
+end $$;
+insert into tres (test) values ('statistics after currency changes');
+
 -- tidy up
 do $$ declare s record; c record; begin
   select * into s from start_state; select * into c from ctx;
   perform t.as_user('superadmin'); set local role authenticated;
-  perform delete_common_expense(id) from common_expenses where title in ('Edited','Now dollars','LBP bill','Edit me');
+  perform delete_common_expense(id) from common_expenses where title in ('Edited','Now dollars','LBP bill','Edit me','Stats switch');
   perform delete_card_spend(id) from card_transactions where card_id = c.card;
   perform delete_deposit(c.dep);
   perform delete_transfer(id) from transfers where to_account_id = c.acct;

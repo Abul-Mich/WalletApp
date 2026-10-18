@@ -620,6 +620,7 @@ export default function Dashboard({ familyId }) {
         {showAddSheet && (
           <AddActionSheet
             familyId={familyId}
+            limits={{ me: mySpend, members: memberSpends, family: familyBudgetSpend }}
             memberId={myMember.id}
             categories={categories}
             accounts={accounts}
@@ -814,6 +815,7 @@ export default function Dashboard({ familyId }) {
         {showAddSheet && myMember && (
           <AddActionSheet
             familyId={familyId}
+            limits={{ me: mySpend, members: memberSpends, family: familyBudgetSpend }}
             memberId={myMember.id}
             categories={categories}
             accounts={accounts}
@@ -886,6 +888,7 @@ export default function Dashboard({ familyId }) {
         {showAddSheet && myMember && (
           <AddActionSheet
             familyId={familyId}
+            limits={{ me: mySpend, members: memberSpends, family: familyBudgetSpend }}
             memberId={myMember.id}
             categories={categories}
             accounts={accounts}
@@ -948,6 +951,7 @@ export default function Dashboard({ familyId }) {
         {showAddSheet && myMember && (
           <AddActionSheet
             familyId={familyId}
+            limits={{ me: mySpend, members: memberSpends, family: familyBudgetSpend }}
             memberId={myMember.id}
             categories={categories}
             accounts={accounts}
@@ -1082,6 +1086,7 @@ export default function Dashboard({ familyId }) {
       {showAddSheet && myMember && (
         <AddActionSheet
           familyId={familyId}
+          limits={{ me: mySpend, members: memberSpends, family: familyBudgetSpend }}
           memberId={myMember.id}
           categories={categories}
           accounts={accounts}

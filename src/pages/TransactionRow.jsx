@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
 import { buildLegs, netUsd, updateExpense, deleteExpense, deleteCardSpend } from "../lib/wallets";
 import { formatUsd, formatMoney, formatDateTime, parseNumber } from "../lib/format";
@@ -25,6 +26,7 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const { ask, dialog } = useConfirm();
 
   const categoryName = isCommon
     ? categories?.find((c) => c.id === t.category_id)?.name ?? "Common expenses"
@@ -113,25 +115,26 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
     }
   }
 
-  async function remove() {
-    if (!confirm(`Delete this ${isCard ? "card spending" : "expense"}? The money goes back to the wallet it came from.`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (isCard) await deleteCardSpend(t.id);
-      else await deleteExpense(t.id);
-      onChanged?.();
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
+  function remove() {
+    ask({
+      title: `Delete this ${isCard ? "card spending" : "expense"}?`,
+      detail: t.note || undefined,
+      effect: "The money goes back to the wallet it came from, and your limits and statistics are recalculated. This cannot be undone.",
+      confirmLabel: "Delete", cancelLabel: "Keep it", icon: "trash",
+      onConfirm: async () => {
+        if (isCard) await deleteCardSpend(t.id);
+        else await deleteExpense(t.id);
+        onChanged?.();
+      },
+    });
   }
 
   if (editing && isCard) {
     return (
-      <li className="txn-edit">
+      <li className="txn-edit-host">
         <CardSpendEditForm record={t} categories={categories} members={members}
-          onSaved={() => { setEditing(false); onChanged?.(); }} onCancel={() => setEditing(false)} />
+          onSaved={() => { setEditing(false); onChanged?.(); }} onCancel={() => setEditing(false)} onDelete={remove} />
+        {dialog}
       </li>
     );
   }
@@ -186,6 +189,7 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
         </div>
       )}
       {error && <p className="status error">{error}</p>}
+      {dialog}
     </li>
   );
 }
