@@ -1,12 +1,6 @@
 import { useState } from 'react'
-
-const BILLS_SHOWN = 5
 import { supabase } from '../supabaseClient'
-import { getExchangeRate } from '../lib/exchangeRates'
-import { createExpense, latestLbpRate } from '../lib/wallets'
-import { formatMoney } from '../lib/format'
-
-const BILL_CURRENCIES = ['USD', 'LBP']
+import { getExchangeRate, SUPPORTED_CURRENCIES } from '../lib/exchangeRates'
 
 function addPeriod(dateStr, recurrence) {
   const d = new Date(dateStr)
@@ -25,13 +19,14 @@ function daysUntil(dateStr) {
 export default function PlannedPayments({
   familyId,
   memberId,
+  baseCurrency,
   categories,
   payments,
   onDone
 }) {
   const [name, setName] = useState('')
   const [amount, setAmount] = useState('')
-  const [currency, setCurrency] = useState('USD')
+  const [currency, setCurrency] = useState(baseCurrency)
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '')
   const [recurrence, setRecurrence] = useState('monthly')
   const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10))
@@ -43,7 +38,7 @@ export default function PlannedPayments({
     setBusy(true)
     setError(null)
     try {
-      const rate = await getExchangeRate(familyId, currency, 'USD')
+      const rate = await getExchangeRate(familyId, currency, baseCurrency)
       const { error: err } = await supabase.from('planned_payments').insert({
         family_id: familyId,
         created_by_member_id: memberId,
@@ -73,30 +68,20 @@ export default function PlannedPayments({
     setBusy(true)
     setError(null)
     try {
-      // Logged as a normal expense from the member's own wallet. USD bills pay
-      // from the USD wallet, LBP bills from the LBP wallet at today's rate.
-      // (Old EUR/GBP bills are converted to USD at today's rate.)
-      const cur = payment.currency
-      let legs, lbpRate = null, original = Number(payment.amount)
-      if (cur === 'LBP') {
-        lbpRate = await latestLbpRate(familyId)
-        if (!lbpRate) throw new Error('Set the LBP exchange rate in Settings first.')
-        legs = [{ currency: 'LBP', amount: -original }]
-      } else if (cur === 'USD') {
-        legs = [{ currency: 'USD', amount: -original }]
-      } else {
-        const r = await getExchangeRate(familyId, cur, 'USD')
-        legs = [{ currency: 'USD', amount: -Math.round(original * r * 10000) / 10000 }]
-      }
-      await createExpense({
-        memberId,
-        categoryId: payment.category_id,
-        note: `Bill: ${payment.name}`,
-        legs,
-        lbpPerUsd: lbpRate,
-        originalAmount: original,
-        originalCurrency: cur,
+      // Use a fresh rate at time of payment rather than the rate stored when
+      // the bill was originally created, since that could be stale by now.
+      const rate = await getExchangeRate(familyId, payment.currency, baseCurrency)
+
+      const { error: txnErr } = await supabase.from('transactions').insert({
+        family_id: familyId,
+        member_id: memberId,
+        amount: payment.amount,
+        currency: payment.currency,
+        exchange_rate_to_base: rate,
+        category_id: payment.category_id,
+        note: `Bill: ${payment.name}`
       })
+      if (txnErr) throw txnErr
 
       if (payment.recurrence === 'one_time') {
         const { error: updErr } = await supabase
@@ -133,7 +118,6 @@ export default function PlannedPayments({
     }
   }
 
-  const [showAll, setShowAll] = useState(false)
   const sorted = [...payments].sort(
     (a, b) => new Date(a.next_due_date) - new Date(b.next_due_date)
   )
@@ -142,7 +126,7 @@ export default function PlannedPayments({
     <div>
       {sorted.length === 0 && <p className="hint">No upcoming bills yet.</p>}
       <ul className="bill-list">
-        {(showAll ? sorted : sorted.slice(0, BILLS_SHOWN)).map((p) => {
+        {sorted.map((p) => {
           const days = daysUntil(p.next_due_date)
           const status = days < 0 ? 'overdue' : days <= 3 ? 'soon' : ''
           return (
@@ -155,7 +139,7 @@ export default function PlannedPayments({
                   </span>
                 </span>
                 <span>
-                  {formatMoney(p.amount, p.currency)}
+                  {Number(p.amount).toFixed(2)} {p.currency}
                 </span>
               </div>
               <div className="bill-meta">
@@ -185,11 +169,6 @@ export default function PlannedPayments({
           )
         })}
       </ul>
-      {sorted.length > BILLS_SHOWN && (
-        <button type="button" className="load-more" onClick={() => setShowAll((v) => !v)}>
-          {showAll ? 'Show fewer' : `Show all ${sorted.length} bills`}
-        </button>
-      )}
 
       <h3 className="subsection">Add a Bill</h3>
       <form onSubmit={handleAdd} className="inline-form">
@@ -209,7 +188,7 @@ export default function PlannedPayments({
           required
         />
         <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-          {BILL_CURRENCIES.map((c) => (
+          {SUPPORTED_CURRENCIES.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -228,8 +207,8 @@ export default function PlannedPayments({
           <option value="one_time">One-time</option>
         </select>
         <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />
-        <button type="submit" className="btn btn-primary" disabled={busy}>
-          {busy ? 'Adding...' : 'Add bill'}
+        <button type="submit" disabled={busy}>
+          {busy ? 'Adding...' : 'Add Bill'}
         </button>
         {error && <p className="status error">{error}</p>}
       </form>
