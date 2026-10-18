@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [mode, setMode] = useState('password') // 'password' | 'magic'
+  const [mode, setMode] = useState('password') // 'password' | 'magic' | 'forgot'
   const [status, setStatus] = useState(null)
   const [isSignup, setIsSignup] = useState(false)
 
@@ -24,6 +24,17 @@ export default function Login() {
     setStatus(error ? error.message : 'Check your email for the login link.')
   }
 
+  async function handleForgotPassword(e) {
+    e.preventDefault()
+    setStatus('Sending reset link...')
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin
+    })
+    setStatus(
+      error ? error.message : 'Check your email for a link to reset your password.'
+    )
+  }
+
   return (
     <div className="auth-screen">
       <h1>Family Wallet</h1>
@@ -38,7 +49,7 @@ export default function Login() {
         </button>
       </div>
 
-      {mode === 'password' ? (
+      {mode === 'password' && (
         <form onSubmit={handlePasswordAuth}>
           <input
             type="email"
@@ -59,8 +70,15 @@ export default function Login() {
           <button type="button" className="link-btn" onClick={() => setIsSignup(!isSignup)}>
             {isSignup ? 'Already have an account? Log in' : "New here? Create an account"}
           </button>
+          {!isSignup && (
+            <button type="button" className="link-btn" onClick={() => { setMode('forgot'); setStatus(null) }}>
+              Forgot password?
+            </button>
+          )}
         </form>
-      ) : (
+      )}
+
+      {mode === 'magic' && (
         <form onSubmit={handleMagicLink}>
           <input
             type="email"
@@ -70,6 +88,25 @@ export default function Login() {
             required
           />
           <button type="submit">Send Magic Link</button>
+        </form>
+      )}
+
+      {mode === 'forgot' && (
+        <form onSubmit={handleForgotPassword}>
+          <p className="subtitle">
+            Enter your email and we'll send you a link to reset your password.
+          </p>
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <button type="submit">Send Reset Link</button>
+          <button type="button" className="link-btn" onClick={() => { setMode('password'); setStatus(null) }}>
+            Back to log in
+          </button>
         </form>
       )}
 
