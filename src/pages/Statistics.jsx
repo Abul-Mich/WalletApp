@@ -1,316 +1,221 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../AuthContext";
 import { isAdmin } from "../lib/roles";
-import { loadAccounts, latestLbpRate, bal } from "../lib/wallets";
+import { loadAccounts, latestLbpRate, bal, spendRollup } from "../lib/wallets";
 import { formatUsd, formatShortDate, formatDate } from "../lib/format";
-
-// Calendar day in Beirut, as sortable text (2026-10-07)
-const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Beirut" });
-const dayKey = (iso) => dayFmt.format(new Date(iso));
+import TransactionRow from "./TransactionRow";
 import {
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import "../styles/statistics.css";
+import "../styles/statistics-extra.css";
+
+// ---------- Beirut calendar helpers (the family's day boundaries) ----------
+const TZ = "Asia/Beirut";
+const keyFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ });
+const dayKey = (iso) => keyFmt.format(new Date(iso));
+const todayKey = () => keyFmt.format(new Date());
+const addDays = (key, n) => {
+  const d = new Date(`${key}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+function offsetMin(date) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(date).map((x) => [x.type, x.value]),
+  );
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return Math.round((asUtc - Math.floor(date.getTime() / 1000) * 1000) / 60000);
+}
+// The instant a Beirut calendar day starts.
+function midnight(key) {
+  const guess = new Date(`${key}T00:00:00Z`);
+  let t = guess.getTime() - offsetMin(guess) * 60000;
+  t = guess.getTime() - offsetMin(new Date(t)) * 60000;
+  return new Date(t);
+}
+
+const PRESETS = [
+  { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
+  { id: "week", label: "This week" },
+  { id: "month", label: "This month" },
+  { id: "custom", label: "Custom range" },
+];
+
+// Returns { start, end (exclusive), error } for a preset.
+function rangeFor(preset, customStart, customEnd) {
+  const today = todayKey();
+  if (preset === "today") return { start: midnight(today), end: midnight(addDays(today, 1)) };
+  if (preset === "yesterday") return { start: midnight(addDays(today, -1)), end: midnight(today) };
+  if (preset === "week") {
+    const dow = (new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7; // Monday = 0
+    return { start: midnight(addDays(today, -dow)), end: midnight(addDays(today, 1)) };
+  }
+  if (preset === "month") return { start: midnight(`${today.slice(0, 8)}01`), end: midnight(addDays(today, 1)) };
+  if (!customStart || !customEnd) return { start: midnight(today), end: midnight(addDays(today, 1)), error: "Pick a start and an end date." };
+  if (customStart > customEnd) return { start: midnight(today), end: midnight(addDays(today, 1)), error: "The start date is after the end date." };
+  return { start: midnight(customStart), end: midnight(addDays(customEnd, 1)) };
+}
+
+// ---------- chart colors: validated categorical palette, fixed order ----------
+const SERIES = ["var(--viz-1)", "var(--viz-2)", "var(--viz-3)", "var(--viz-4)", "var(--viz-5)", "var(--viz-6)", "var(--viz-7)", "var(--viz-8)"];
+const EXTRA_CATEGORIES = ["Card spending", "Common expenses", "Uncategorized"];
 
 // Every amount here is net USD (the figure that counts toward limits).
 const usd = (t) =>
   t.net_usd != null ? Number(t.net_usd) : Number(t.amount) * Number(t.exchange_rate_to_base || 1);
 
+const DRILL_PAGE = 20;
+const TABLE_OF = { transaction: "transactions", card: "card_transactions", common: "common_expenses" };
+
 export default function Statistics({ familyId }) {
   const { session } = useAuth();
-  const [family, setFamily] = useState(null);
   const [members, setMembers] = useState([]);
   const [myMember, setMyMember] = useState(null);
 
-  // Filters
   const [selectedMember, setSelectedMember] = useState("all");
-  const [dateRange, setDateRange] = useState("30days");
-  const [customStartDate, setCustomStartDate] = useState("");
-  const [customEndDate, setCustomEndDate] = useState("");
+  const [preset, setPreset] = useState("month");
+  const [customStart, setCustomStart] = useState(() => `${todayKey().slice(0, 8)}01`);
+  const [customEnd, setCustomEnd] = useState(() => todayKey());
+  const [drill, setDrill] = useState(null); // { name, refs: [{kind, categoryId}], total, count } being inspected
+  const [drillRows, setDrillRows] = useState([]);
+  const [drillLimit, setDrillLimit] = useState(DRILL_PAGE);
+  const [drillLoading, setDrillLoading] = useState(false);
 
-  // Data
-  const [transactions, setTransactions] = useState([]);
+  const [rollup, setRollup] = useState({ total: 0, count: 0, daily: [], categories: [], people: [] });
   const [categories, setCategories] = useState([]);
-  const [wallet, setWallet] = useState(null);
+  const [familyMoney, setFamilyMoney] = useState(0);
   const [loading, setLoading] = useState(true);
   const [chartHeight, setChartHeight] = useState(300);
-  const [pieRadius, setPieRadius] = useState(100);
 
-  // Computed data
-  const [spendingTrend, setSpendingTrend] = useState([]);
-  const [categoryBreakdown, setcategoryBreakdown] = useState([]);
-  const [memberComparison, setMemberComparison] = useState([]);
-  const [balanceHistory, setBalanceHistory] = useState([]);
-  const [cashFlowMetrics, setCashFlowMetrics] = useState({});
-
-  const COLORS = [
-    "#5b8def",
-    "#77a1f4",
-    "#3ecf8e",
-    "#eab04d",
-    "#ef6a5f",
-    "#a78bfa",
-    "#06b6d4",
-  ];
-
-  // Responsive chart heights
   useEffect(() => {
-    function handleResize() {
-      if (window.innerWidth < 480) {
-        setChartHeight(160);
-        setPieRadius(60);
-      } else if (window.innerWidth < 768) {
-        setChartHeight(200);
-        setPieRadius(70);
-      } else {
-        setChartHeight(300);
-        setPieRadius(100);
-      }
-    }
-
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    const onResize = () => setChartHeight(window.innerWidth < 480 ? 180 : window.innerWidth < 768 ? 220 : 300);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Get date range
-  function getDateRangeValues() {
-    const end = new Date();
-    let start = new Date();
+  const range = useMemo(() => rangeFor(preset, customStart, customEnd), [preset, customStart, customEnd]);
 
-    if (dateRange === "7days") {
-      start.setDate(end.getDate() - 7);
-    } else if (dateRange === "30days") {
-      start.setDate(end.getDate() - 30);
-    } else if (dateRange === "3months") {
-      start.setMonth(end.getMonth() - 3);
-    } else if (dateRange === "custom") {
-      start = new Date(customStartDate);
-    }
-
-    return { start, end };
-  }
-
-  // Load family, members, transactions
-  async function loadData() {
-    try {
+  // Load the records of the chosen period.
+  useEffect(() => {
+    if (!familyId || !session?.user?.id || range.error) return;
+    let cancelled = false;
+    (async () => {
       setLoading(true);
+      try {
+        const [{ data: fam }, { data: mine }, { data: cats }] = await Promise.all([
+          supabase.from("members").select("*").eq("family_id", familyId),
+          supabase.from("members").select("*").eq("family_id", familyId).eq("user_id", session.user.id).maybeSingle(),
+          supabase.from("categories").select("*").eq("family_id", familyId),
+        ]);
+        const accts = await loadAccounts(familyId);
+        const rate = await latestLbpRate(familyId);
+        const money = accts.reduce((sum, a) => sum + (a.currency === "USD" ? bal(a) : rate > 0 ? bal(a) / rate : 0), 0);
 
-      // Get family
-      const { data: familyData } = await supabase
-        .from("families")
-        .select("*")
-        .eq("id", familyId)
-        .single();
-      setFamily(familyData);
+        const roll = await spendRollup({
+          familyId, from: range.start.toISOString(), to: range.end.toISOString(),
+          memberId: selectedMember !== "all" ? selectedMember : null,
+        });
+        if (cancelled) return;
 
-      // Get members
-      const { data: membersData } = await supabase
-        .from("members")
-        .select("*")
-        .eq("family_id", familyId);
-      setMembers(membersData || []);
-
-      // Get current user's member record
-      if (session?.user?.id) {
-        const { data: myMemberData } = await supabase
-          .from("members")
-          .select("*")
-          .eq("family_id", familyId)
-          .eq("user_id", session.user.id)
-          .single();
-        setMyMember(myMemberData);
+        setMembers(fam || []);
+        setMyMember(mine);
+        setCategories(cats || []);
+        setFamilyMoney(money);
+        setRollup(roll);
+      } catch (e) {
+        console.error("Error loading statistics:", e);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
+    })();
+    return () => { cancelled = true; };
+  }, [familyId, session, selectedMember, range]);
 
-      // Whole-family money in USD (pool + members + cards) at the family rate
-      const accts = await loadAccounts(familyId);
-      const rate = await latestLbpRate(familyId);
-      const totalUsd = accts.reduce(
-        (sum, a) =>
-          sum + (a.currency === "USD" ? bal(a) : rate > 0 ? bal(a) / rate : 0),
-        0,
-      );
-      setWallet({ balance_cache: totalUsd });
+  // Display name of a rolled-up group: the family's category, or a built-in label for records without one.
+  const groupName = (g) =>
+    categories.find((c) => c.id === g.category_id)?.name ??
+    (g.kind === "card" ? "Card spending" : g.kind === "common" ? "Common expenses" : "Uncategorized");
 
-      // Get categories
-      const { data: categoriesData } = await supabase
-        .from("categories")
-        .select("*")
-        .eq("family_id", familyId);
-      setCategories(categoriesData || []);
+  // Stable color per category name (order of the family's categories, then the built-in ones).
+  const colorFor = useMemo(() => {
+    const order = [...categories.map((c) => c.name).sort((a, b) => a.localeCompare(b)), ...EXTRA_CATEGORIES];
+    return (name) => {
+      const i = order.indexOf(name);
+      return i >= 0 && i < SERIES.length ? SERIES[i] : "var(--viz-other)";
+    };
+  }, [categories]);
 
-      // Get transactions with date filtering
-      const { start, end } = getDateRangeValues();
-      let query = supabase
-        .from("transactions")
-        .select("*")
-        .eq("family_id", familyId)
-        .gte("created_at", start.toISOString())
-        .lte("created_at", end.toISOString());
+  const stats = useMemo(() => {
+    const total = Number(rollup.total);
 
-      if (selectedMember !== "all") {
-        query = query.eq("member_id", selectedMember);
-      }
+    const trend = rollup.daily.map((d) => ({ date: formatShortDate(`${d.day}T12:00:00+03:00`), amount: Number(Number(d.total).toFixed(2)) }));
 
-      const { data: txnData } = await query.order("created_at", {
-        ascending: true,
-      });
-      let cardQuery = supabase
-        .from("card_transactions")
-        .select("*")
-        .eq("family_id", familyId)
-        .gte("created_at", start.toISOString())
-        .lte("created_at", end.toISOString());
-      if (selectedMember !== "all") cardQuery = cardQuery.eq("tagged_member_id", selectedMember);
-      const { data: cardData } = await cardQuery;
-      // Common (family) expenses belong to no member, so they only show in the all-members view.
-      let commonData = [];
-      if (selectedMember === "all") {
-        const { data: cx } = await supabase
-          .from("common_expenses")
-          .select("*")
-          .eq("family_id", familyId)
-          .gte("created_at", start.toISOString())
-          .lte("created_at", end.toISOString());
-        commonData = (cx || []).map((c) => ({ ...c, _common: true }));
-      }
-      const merged = [
-        ...(txnData || []),
-        ...commonData,
-        // attribute card spending to the person it was spent for
-        ...(cardData || []).map((c) => ({ ...c, member_id: c.tagged_member_id ?? c.member_id, category_id: null, _card: true })),
-      ].sort((x, y) => new Date(x.created_at) - new Date(y.created_at));
-      setTransactions(merged);
-
-      setLoading(false);
-    } catch (error) {
-      console.error("Error loading statistics:", error);
-      setLoading(false);
-    }
-  }
-
-  // Load initial data
-  useEffect(() => {
-    if (familyId && session?.user?.id) {
-      loadData();
-    }
-  }, [
-    familyId,
-    session,
-    selectedMember,
-    dateRange,
-    customStartDate,
-    customEndDate,
-  ]);
-
-  // Process transactions into charts
-  useEffect(() => {
-    if (transactions.length === 0) {
-      setSpendingTrend([]);
-      setcategoryBreakdown([]);
-      setMemberComparison([]);
-      setCashFlowMetrics({
-        totalSpent: 0,
-        totalDeposits: 0,
-        netChange: 0,
-        avgDailySpend: 0,
-      });
-      return;
-    }
-
-    // 1. Spending Trend (daily)
-    const dailySpend = {};
-    transactions.forEach((txn) => {
-      const key = dayKey(txn.created_at);
-      dailySpend[key] = (dailySpend[key] || 0) + usd(txn);
+    // Merge groups that share a display name (a category used by expenses and card spends is one row).
+    const byCat = {};
+    rollup.categories.forEach((g) => {
+      const n = groupName(g);
+      const e = byCat[n] || (byCat[n] = { name: n, value: 0, count: 0, refs: [] });
+      e.value += Number(g.total);
+      e.count += Number(g.count);
+      e.refs.push({ kind: g.kind, categoryId: g.category_id });
     });
+    const cats = Object.values(byCat).map((c) => ({ ...c, value: Number(c.value.toFixed(2)) })).sort((a, b) => b.value - a.value);
 
-    const trend = Object.entries(dailySpend)
-      .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([key, amount]) => ({
-        date: formatShortDate(`${key}T12:00:00+03:00`),
-        amount: parseFloat(amount.toFixed(2)),
-      }));
-    setSpendingTrend(trend);
+    const people = rollup.people.map((p) => ({
+      name: (p.member_id ? members.find((m) => m.id === p.member_id)?.display_name : null) ?? "Shared family costs",
+      amount: Number(Number(p.total).toFixed(2)),
+    })).sort((a, b) => b.amount - a.amount);
 
-    // 2. Category Breakdown
-    const categorySpend = {};
-    transactions.forEach((txn) => {
-      const categoryName =
-        (txn._card ? "Card spending" : categories.find((c) => c.id === txn.category_id)?.name) ||
-        (txn._common ? "Common expenses" : "Uncategorized");
-      categorySpend[categoryName] =
-        (categorySpend[categoryName] || 0) + usd(txn);
-    });
-
-    const breakdown = Object.entries(categorySpend)
-      .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
-      .sort((a, b) => b.value - a.value);
-    setcategoryBreakdown(breakdown);
-
-    // 3. Member Comparison
-    const memberSpend = {};
-    transactions.forEach((txn) => {
-      const member = members.find((m) => m.id === txn.member_id);
-      if (member) {
-        memberSpend[member.display_name] =
-          (memberSpend[member.display_name] || 0) + usd(txn);
-      }
-    });
-
-    const comparison = Object.entries(memberSpend)
-      .map(([name, amount]) => ({
-        name,
-        amount: parseFloat(amount.toFixed(2)),
-      }))
-      .sort((a, b) => b.amount - a.amount);
-    setMemberComparison(comparison);
-
-    // 4. Cash Flow Metrics
-    const totalSpent = transactions.reduce(
-      (sum, t) => sum + usd(t),
-      0,
-    );
-    const { start, end } = getDateRangeValues();
-    const daysInRange = Math.max(
-      1,
-      Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
-    );
-    const avgDailySpend = totalSpent / daysInRange;
-
-    setCashFlowMetrics({
-      totalSpent: parseFloat(totalSpent.toFixed(2)),
-      totalDeposits: wallet?.balance_cache || 0,
-      netChange: (wallet?.balance_cache || 0) - totalSpent,
-      avgDailySpend: parseFloat(avgDailySpend.toFixed(2)),
-    });
-  }, [transactions, categories, members]);
+    const effectiveEnd = Math.min(range.end.getTime(), midnight(addDays(todayKey(), 1)).getTime());
+    const days = Math.max(1, Math.round((effectiveEnd - range.start.getTime()) / 86400000));
+    return { total, trend, cats, people, avgDaily: total / days, top: cats[0] };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rollup, categories, members, range]);
 
   const amAdmin = myMember && isAdmin(myMember.role);
-  const { start, end } = getDateRangeValues();
+  // Records of the opened category, newest first, fetched a page at a time.
+  useEffect(() => {
+    if (!drill) return;
+    let cancelled = false;
+    (async () => {
+      setDrillLoading(true);
+      try {
+        const who = selectedMember !== "all" ? selectedMember : null;
+        const lists = await Promise.all(drill.refs.map(async (ref) => {
+          let q = supabase.from(TABLE_OF[ref.kind]).select("*").eq("family_id", familyId)
+            .gte("created_at", range.start.toISOString()).lt("created_at", range.end.toISOString());
+          q = ref.categoryId ? q.eq("category_id", ref.categoryId) : q.is("category_id", null);
+          if (who) q = ref.kind === "transaction" ? q.eq("member_id", who) : q.eq("tagged_member_id", who);
+          const { data, error } = await q.order("created_at", { ascending: false }).limit(drillLimit);
+          if (error) throw error;
+          return (data || []).map((r) => ({ ...r, kind: ref.kind }));
+        }));
+        if (cancelled) return;
+        setDrillRows(lists.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, drillLimit));
+      } catch (e) {
+        console.error("Error loading category records:", e);
+      } finally {
+        if (!cancelled) setDrillLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [drill, drillLimit, familyId, selectedMember, range]);
 
-  if (loading) {
-    return (
-      <div className="stats-container">
-        <p>Loading statistics...</p>
-      </div>
-    );
-  }
+  const openDrill = (c) => { setDrillRows([]); setDrillLimit(DRILL_PAGE); setDrill({ name: c.name, refs: c.refs, total: c.value, count: c.count }); };
+  const periodText = `${formatDate(range.start)} – ${formatDate(new Date(range.end.getTime() - 1))}`;
+
+  const tooltipStyle = {
+    contentStyle: { backgroundColor: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: "8px" },
+    labelStyle: { color: "var(--text)" },
+    itemStyle: { color: "var(--text)" },
+  };
 
   return (
     <div className="stats-container">
@@ -319,241 +224,156 @@ export default function Statistics({ familyId }) {
         <p>Family financial overview and insights</p>
       </div>
 
-      {/* Filters */}
+      <div className="period-chips" role="group" aria-label="Period">
+        {PRESETS.map((p) => (
+          <button key={p.id} type="button" className="chip" aria-pressed={preset === p.id} onClick={() => setPreset(p.id)}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {preset === "custom" && (
+        <div className="custom-range">
+          <div className="filter-group">
+            <label htmlFor="start-date">From</label>
+            <input id="start-date" type="date" className="filter-input" value={customStart} max={customEnd || undefined} onChange={(e) => setCustomStart(e.target.value)} />
+          </div>
+          <div className="filter-group">
+            <label htmlFor="end-date">To</label>
+            <input id="end-date" type="date" className="filter-input" value={customEnd} min={customStart || undefined} max={todayKey()} onChange={(e) => setCustomEnd(e.target.value)} />
+          </div>
+        </div>
+      )}
+      <p className={`range-note ${range.error ? "error" : ""}`}>{range.error ?? periodText}</p>
+
       <div className="stats-filters">
-        {/* Member Filter */}
         <div className="filter-group">
           <label htmlFor="member-filter">Member</label>
-          <select
-            id="member-filter"
-            value={selectedMember}
-            onChange={(e) => setSelectedMember(e.target.value)}
-            className="filter-select"
-          >
-            <option value="all">All Members</option>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.display_name}
-              </option>
-            ))}
+          <select id="member-filter" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} className="filter-select">
+            <option value="all">All members</option>
+            {members.filter((m) => !m.removed_at).map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
           </select>
-        </div>
-
-        {/* Date Range Filter */}
-        <div className="filter-group">
-          <label htmlFor="date-filter">Period</label>
-          <select
-            id="date-filter"
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value)}
-            className="filter-select"
-          >
-            <option value="7days">Last 7 Days</option>
-            <option value="30days">Last 30 Days</option>
-            <option value="3months">Last 3 Months</option>
-            <option value="custom">Custom Range</option>
-          </select>
-        </div>
-
-        {/* Custom Date Range */}
-        {dateRange === "custom" && (
-          <>
-            <div className="filter-group">
-              <label htmlFor="start-date">Start Date</label>
-              <input
-                id="start-date"
-                type="date"
-                value={customStartDate}
-                onChange={(e) => setCustomStartDate(e.target.value)}
-                className="filter-input"
-              />
-            </div>
-            <div className="filter-group">
-              <label htmlFor="end-date">End Date</label>
-              <input
-                id="end-date"
-                type="date"
-                value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
-                className="filter-input"
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Summary Cards */}
-      <div className="stats-summary-cards">
-        <div className="summary-card">
-          <div className="summary-label">Total Spent</div>
-          <div className="summary-value">{formatUsd(cashFlowMetrics.totalSpent)}</div>
-          <div className="summary-meta">{transactions.length} transactions</div>
-        </div>
-
-        <div className="summary-card">
-          <div className="summary-label">Family Money (USD)</div>
-          <div className="summary-value">
-            {formatUsd(wallet?.balance_cache || 0)}
-          </div>
-          <div className="summary-meta">Current balance</div>
-        </div>
-
-        <div className="summary-card">
-          <div className="summary-label">Avg Daily Spend</div>
-          <div className="summary-value">{formatUsd(cashFlowMetrics.avgDailySpend)}</div>
-          <div className="summary-meta">Average per day</div>
-        </div>
-
-        <div className="summary-card">
-          <div className="summary-label">Net Change</div>
-          <div
-            className={`summary-value ${cashFlowMetrics.netChange >= 0 ? "positive" : "negative"}`}
-          >
-            {cashFlowMetrics.netChange >= 0 ? "+" : ""}
-            {formatUsd(cashFlowMetrics.netChange)}
-          </div>
-          <div className="summary-meta">Period change</div>
         </div>
       </div>
 
-      {/* Charts Grid */}
-      <div className="stats-charts">
-        {/* Spending Trend */}
-        <div className="chart-card">
-          <h3>Spending Trend</h3>
-          <ResponsiveContainer width="100%" height={chartHeight}>
-            <LineChart data={spendingTrend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="date" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
-              <Tooltip
-                formatter={(v) => formatUsd(v)}
-                contentStyle={{
-                  backgroundColor: "var(--surface-raised)",
-                  border: `1px solid var(--border)`,
-                  borderRadius: "8px",
-                }}
-                labelStyle={{ color: "var(--text)" }}
-              />
-              <Line
-                type="monotone"
-                dataKey="amount"
-                stroke="var(--accent)"
-                strokeWidth={2}
-                dot={{ fill: "var(--accent)", r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+      {loading ? (
+        <p>Loading statistics...</p>
+      ) : (
+        <>
+          <div className="stats-summary-cards">
+            <div className="summary-card">
+              <div className="summary-label">Total spent</div>
+              <div className="summary-value">{formatUsd(stats.total)}</div>
+              <div className="summary-meta">{rollup.count} record{Number(rollup.count) === 1 ? "" : "s"}</div>
+            </div>
+            <div className="summary-card">
+              <div className="summary-label">Family money (USD)</div>
+              <div className="summary-value">{formatUsd(familyMoney)}</div>
+              <div className="summary-meta">Right now, all wallets</div>
+            </div>
+            <div className="summary-card">
+              <div className="summary-label">Average per day</div>
+              <div className="summary-value">{formatUsd(stats.avgDaily)}</div>
+              <div className="summary-meta">In this period</div>
+            </div>
+            <div className="summary-card">
+              <div className="summary-label">Top category</div>
+              <div className="summary-value" style={{ fontSize: "1.1rem" }}>{stats.top ? stats.top.name : "None"}</div>
+              <div className="summary-meta">{stats.top ? formatUsd(stats.top.value) : "No spending yet"}</div>
+            </div>
+          </div>
 
-        {/* Category breakdown */}
-        <div className="chart-card">
-          <h3>Spending by Category</h3>
-          <ResponsiveContainer width="100%" height={chartHeight}>
-            <PieChart>
-              <Pie
-                data={categoryBreakdown}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={
-                  window.innerWidth > 768
-                    ? ({ name, value }) => `${name}: ${formatUsd(value)}`
-                    : false
-                }
-                outerRadius={pieRadius}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {categoryBreakdown.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={COLORS[index % COLORS.length]}
-                  />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "var(--surface-raised)",
-                  border: `1px solid var(--border)`,
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                }}
-                labelStyle={{ color: "var(--text)" }}
-                formatter={(value, name, props) => [
-                  formatUsd(value),
-                  props.payload.name,
-                ]}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          {window.innerWidth <= 768 && categoryBreakdown.length > 0 && (
-            <div className="chart-legend">
-              <div className="legend-items">
-                {categoryBreakdown.map((item, idx) => (
-                  <div key={item.name} className="legend-item">
-                    <span
-                      className="legend-color"
-                      style={{ backgroundColor: COLORS[idx % COLORS.length] }}
-                    />
-                    <span className="legend-label">
-                      {item.name}: {formatUsd(item.value)}
-                    </span>
-                  </div>
-                ))}
+          <div className="stats-charts">
+            <div className="chart-card">
+              <h3>Spending trend</h3>
+              <ResponsiveContainer width="100%" height={chartHeight}>
+                <LineChart data={stats.trend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="date" stroke="var(--text-muted)" />
+                  <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
+                  <Tooltip formatter={(v) => formatUsd(v)} {...tooltipStyle} />
+                  <Line type="monotone" dataKey="amount" stroke="var(--viz-1)" strokeWidth={2} dot={{ fill: "var(--viz-1)", r: 4, stroke: "var(--surface)", strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="chart-card">
+              <h3>Spending by category</h3>
+              {stats.cats.length === 0 ? (
+                <p className="hint">Nothing in this period.</p>
+              ) : (
+                <>
+                  <ul className="cat-list">
+                    {stats.cats.map((c) => {
+                      const share = stats.total > 0 ? c.value / stats.total : 0;
+                      return (
+                        <li key={c.name}>
+                          <button type="button" className="cat-row" onClick={() => openDrill(c)} aria-label={`${c.name}: ${formatUsd(c.value)}. Show records`}>
+                            <span className="cat-top">
+                              <span className="cat-name">
+                                <span className="cat-swatch" style={{ background: colorFor(c.name) }} />
+                                <span>{c.name}</span>
+                              </span>
+                              <span className="cat-amount">{formatUsd(c.value)}<span className="cat-share">{Math.round(share * 100)}%</span></span>
+                            </span>
+                            <span className="cat-track" aria-hidden="true"><span className="cat-fill" style={{ display: "block", width: `${Math.max(share * 100, 1)}%`, background: colorFor(c.name) }} /></span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <p className="cat-hint">Tap a category to see its records.</p>
+                </>
+              )}
+            </div>
+
+            {amAdmin && selectedMember === "all" && stats.people.length > 0 && (
+              <div className="chart-card full-width">
+                <h3>Spending by person</h3>
+                <ResponsiveContainer width="100%" height={chartHeight}>
+                  <BarChart data={stats.people}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="name" stroke="var(--text-muted)" />
+                    <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
+                    <Tooltip formatter={(v) => formatUsd(v)} cursor={{ fill: "var(--surface-hover)" }} {...tooltipStyle} />
+                    <Bar dataKey="amount" fill="var(--viz-1)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <p className="cat-hint">Card spending and family costs are counted for the person they were spent for.</p>
               </div>
-            </div>
+            )}
+          </div>
+
+          {Number(rollup.count) === 0 && (
+            <div className="empty-state"><p>No records found for this period and member.</p></div>
           )}
-        </div>
+        </>
+      )}
 
-        {/* Member Comparison */}
-        {amAdmin && memberComparison.length > 0 && (
-          <div className="chart-card full-width">
-            <h3>Member Spending Comparison</h3>
-            <ResponsiveContainer width="100%" height={chartHeight}>
-              <BarChart data={memberComparison}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="name" stroke="var(--text-muted)" />
-                <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
-                <Tooltip
-                formatter={(v) => formatUsd(v)}
-                  contentStyle={{
-                    backgroundColor: "var(--surface-raised)",
-                    border: `1px solid var(--border)`,
-                    borderRadius: "8px",
-                  }}
-                  labelStyle={{ color: "var(--text)" }}
-                />
-                <Bar
-                  dataKey="amount"
-                  fill="var(--accent)"
-                  radius={[8, 8, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Balance History */}
-        <div className="chart-card full-width">
-          <h3>Family Balance Overview</h3>
-          <div className="balance-info">
-            <div>
-              Current Balance:{" "}
-              <strong>{formatUsd(wallet?.balance_cache || 0)}</strong>
+      {drill && (
+        <div className="sheet-backdrop" onClick={() => setDrill(null)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-handle" />
+            <div className="sheet-header">
+              <h2>{drill.name}</h2>
+              <button type="button" className="sheet-close" aria-label="Close" onClick={() => setDrill(null)}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+              </button>
             </div>
-            <div>
-              Period: {formatDate(start)} — {formatDate(end)}
+            <div className="sheet-body">
+              <p className="hint">{drill.count} record{drill.count === 1 ? "" : "s"} · {formatUsd(drill.total)} · {periodText}</p>
+              <ul className="txn-list">
+                {drillRows.map((r) => (
+                  <TransactionRow key={`${r.kind}-${r.id}`} t={r} categories={categories} members={members} canManage={false} onChanged={() => {}} />
+                ))}
+              </ul>
+              {drillRows.length < drill.count && (
+                <button type="button" className="load-more" disabled={drillLoading} onClick={() => setDrillLimit((l) => l + DRILL_PAGE)}>
+                  {drillLoading ? "Loading..." : "Load more"}
+                </button>
+              )}
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Empty State */}
-      {transactions.length === 0 && (
-        <div className="empty-state">
-          <p>No transactions found for the selected period and filters.</p>
         </div>
       )}
     </div>

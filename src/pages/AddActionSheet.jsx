@@ -1,17 +1,13 @@
 import { useState } from "react";
 import TransactionForm from "./TransactionForm";
-import MemberBalanceTransfer from "./MemberBalanceTransfer";
-import AddToMainBalanceForm from "./AddToMainBalanceForm";
 import ExchangeForm from "./ExchangeForm";
 
 const TABS = [
-  { key: "expense", label: "Expense" },
-  { key: "add", label: "Take from Pool" },
-  { key: "return", label: "Return to Pool" },
+  { key: "expense", label: "Spend" },
   { key: "exchange", label: "Exchange" },
 ];
 
-export default function AddActionSheet({ familyId, memberId, categories, accounts, amAdmin, onClose, onDone }) {
+export default function AddActionSheet({ familyId, memberId, categories, accounts, members, cards, amAdmin, onClose, onDone }) {
   const [tab, setTab] = useState("expense");
 
   function handleDone() {
@@ -37,12 +33,12 @@ export default function AddActionSheet({ familyId, memberId, categories, account
           ))}
         </div>
         <div className="sheet-body">
-          {tab === "expense" && categories.length > 0 && (
-            <TransactionForm familyId={familyId} memberId={memberId} categories={categories} accounts={accounts.members[memberId]} onDone={handleDone} />
+          {tab === "expense" && (
+            <TransactionForm
+              familyId={familyId} memberId={memberId} categories={categories} accounts={accounts}
+              members={(members || []).filter((m) => !m.removed_at)} cards={cards || []} amAdmin={amAdmin} onDone={handleDone}
+            />
           )}
-          {tab === "expense" && categories.length === 0 && <p className="hint">No categories set up yet.</p>}
-          {tab === "add" && <MemberBalanceTransfer memberId={memberId} accounts={accounts} onDone={handleDone} />}
-          {tab === "return" && <AddToMainBalanceForm memberId={memberId} accounts={accounts} onDone={handleDone} />}
           {tab === "exchange" && <ExchangeForm familyId={familyId} memberId={memberId} accounts={accounts} amAdmin={amAdmin} onDone={handleDone} />}
         </div>
       </div>
