@@ -1,32 +1,39 @@
 import { useEffect, useState } from "react";
+import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
-import { deleteTransfer, deleteCardSpend, fmtMoney, fmtWhen } from "../lib/wallets";
+import CardSpendEditForm from "./CardSpendEditForm";
+import { deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
 import CardTopUpForm from "./CardTopUpForm";
 import CardWithdrawForm from "./CardWithdrawForm";
+import CardToWalletForm from "./CardToWalletForm";
 
 const PAGE_SIZE = 20;
 
 export default function CardDetailModal({
-  familyId, memberId, card, cardAccount, poolAccounts, members, amAdmin, amSuperadmin, onClose, onChanged,
+  familyId, memberId, card, cardAccount, poolAccounts, memberAccounts, members, categories, amAdmin, amSuperadmin, onClose, onChanged,
 }) {
   const [tab, setTab] = useState(card.archived ? "history" : "topup");
   const [history, setHistory] = useState([]);
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null); // card spend being edited
   const [renaming, setRenaming] = useState(false);
   const [nameInput, setNameInput] = useState(card.name);
   const [savingCard, setSavingCard] = useState(false);
   const [cardError, setCardError] = useState(null);
   const cur = cardAccount.currency;
+  const { ask, dialog } = useConfirm();
 
   async function loadHistory(nextLimit) {
     setLoading(true);
-    const [{ data: transfers }, { data: spends }] = await Promise.all([
+    const [{ data: transfers }, { data: spends }, { data: commons }] = await Promise.all([
       supabase.from("transfers").select("*")
         .or(`to_account_id.eq.${cardAccount.id},from_account_id.eq.${cardAccount.id}`)
         .order("created_at", { ascending: false }).limit(nextLimit),
       supabase.from("card_transactions").select("*").eq("card_id", card.id)
+        .order("created_at", { ascending: false }).limit(nextLimit),
+      supabase.from("common_expenses").select("*").eq("account_id", cardAccount.id)
         .order("created_at", { ascending: false }).limit(nextLimit),
     ]);
     const combined = [
@@ -35,9 +42,10 @@ export default function CardDetailModal({
         sign: r.to_account_id === cardAccount.id ? 1 : -1,
       })),
       ...(spends || []).map((r) => ({ ...r, kind: "spend", sign: -1 })),
+      ...(commons || []).map((r) => ({ ...r, kind: "common", member_id: r.created_by, sign: -1 })),
     ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     setHistory(combined.slice(0, nextLimit));
-    setHasMore((transfers?.length ?? 0) === nextLimit || (spends?.length ?? 0) === nextLimit);
+    setHasMore((transfers?.length ?? 0) === nextLimit || (spends?.length ?? 0) === nextLimit || (commons?.length ?? 0) === nextLimit);
     setLoading(false);
   }
 
@@ -46,27 +54,64 @@ export default function CardDetailModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id, limit]);
 
+  // Where a top-up came from: "Family pool" or "<name>'s wallet".
+  function nameOfAccount(id) {
+    if (Object.values(poolAccounts || {}).some((a) => a.id === id)) return "Family pool";
+    for (const [mid, pair] of Object.entries(memberAccounts || {})) {
+      if (Object.values(pair).some((a) => a.id === id)) {
+        const n = members?.find((m) => m.id === mid)?.display_name;
+        return n ? `${n}'s wallet` : "a member wallet";
+      }
+    }
+    return null;
+  }
+
+  function sourceLabel(r) {
+    if (r.kind === "topup" && r.sign < 0) {
+      const to = nameOfAccount(r.to_account_id);
+      return to ? ` · to ${to}` : "";
+    }
+    if (r.kind !== "topup" || r.sign < 0) return "";
+    if (Object.values(poolAccounts || {}).some((a) => a.id === r.from_account_id)) return " · from Family pool";
+    for (const [mid, pair] of Object.entries(memberAccounts || {})) {
+      if (Object.values(pair).some((a) => a.id === r.from_account_id)) {
+        const n = members?.find((m) => m.id === mid)?.display_name;
+        return n ? ` · from ${n}'s wallet` : " · from a member wallet";
+      }
+    }
+    return "";
+  }
+
   function handleDone() {
     onChanged?.();
     setLimit(PAGE_SIZE);
     loadHistory(PAGE_SIZE);
   }
 
-  // Edits are delete + re-enter: the ledger never rewrites a money movement.
+  // Spends can be edited (their person, category, amount, date, note); top-ups and family costs are deleted and re-entered.
+  function canEdit(r) {
+    return !card.archived && r.kind !== "topup" && r.kind !== "common" && (r.member_id === memberId || amAdmin);
+  }
+
   function canDelete(r) {
-    if (r.kind === "topup") return amAdmin;
+    if (r.kind === "topup" || r.kind === "common") return amAdmin;
     return r.member_id === memberId || amSuperadmin;
   }
 
-  async function removeEntry(r) {
-    if (!confirm("Delete this entry? The card balance will be recalculated.")) return;
-    try {
-      if (r.kind === "topup") await deleteTransfer(r.id);
-      else await deleteCardSpend(r.id);
-      handleDone();
-    } catch (err) {
-      alert(err.message);
-    }
+  function removeEntry(r) {
+    const what = r.kind === "topup" ? "top-up" : r.kind === "common" ? "family cost" : "spending";
+    ask({
+      title: `Delete this ${what}?`,
+      detail: `${fmtMoney(r.amount, cur)} on ${card.name}`,
+      effect: "The card balance is recalculated, and the money goes back to where it came from. This cannot be undone.",
+      confirmLabel: `Delete ${what}`, cancelLabel: "Keep it", icon: "trash",
+      onConfirm: async () => {
+        if (r.kind === "topup") await deleteTransfer(r.id);
+        else if (r.kind === "common") await deleteCommonExpense(r.id);
+        else await deleteCardSpend(r.id);
+        handleDone();
+      },
+    });
   }
 
   async function saveRename() {
@@ -86,9 +131,19 @@ export default function CardDetailModal({
     }
   }
 
-  async function toggleArchived() {
+  function toggleArchived() {
     const next = !card.archived;
-    if (next && !confirm(`Archive "${card.name}"? No more top-ups or spending will be allowed, but its balance and history stay visible.`)) return;
+    if (!next) return applyArchived(false);
+    ask({
+      title: `Archive ${card.name}?`,
+      detail: `Balance ${fmtMoney(cardAccount.balance_cache, cur)}`,
+      effect: "No more top-ups or spending on this card. Its balance and history stay visible, and you can unarchive it any time.",
+      confirmLabel: "Archive card", cancelLabel: "Cancel", icon: "archive", danger: false,
+      onConfirm: () => applyArchived(true, true),
+    });
+  }
+
+  async function applyArchived(next, rethrow = false) {
     setSavingCard(true);
     setCardError(null);
     try {
@@ -99,6 +154,7 @@ export default function CardDetailModal({
     } catch (err) {
       setCardError(err.message);
       setSavingCard(false);
+      if (rethrow) throw err;
     }
   }
 
@@ -135,6 +191,8 @@ export default function CardDetailModal({
             <>
               <button type="button" className={`sheet-tab ${tab === "topup" ? "active" : ""}`} onClick={() => setTab("topup")}>Top up</button>
               <button type="button" className={`sheet-tab ${tab === "withdraw" ? "active" : ""}`} onClick={() => setTab("withdraw")}>Spend</button>
+
+              <button type="button" className={`sheet-tab ${tab === "towallet" ? "active" : ""}`} onClick={() => setTab("towallet")}>To my wallet</button>
             </>
           )}
           <button type="button" className={`sheet-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>History</button>
@@ -143,10 +201,14 @@ export default function CardDetailModal({
         <div className="sheet-body">
           {card.archived && tab !== "history" && <p className="hint">This card is archived. Unarchive it to use it again.</p>}
           {!card.archived && tab === "topup" && (
-            <CardTopUpForm cardAccount={cardAccount} poolAccounts={poolAccounts} members={members} onDone={handleDone} />
+            <CardTopUpForm cardAccount={cardAccount} poolAccounts={poolAccounts} memberAccounts={memberAccounts} memberId={memberId} amAdmin={amAdmin} members={members} onDone={handleDone} />
           )}
           {!card.archived && tab === "withdraw" && (
-            <CardWithdrawForm familyId={familyId} memberId={memberId} members={members} card={card} cardAccount={cardAccount} onDone={handleDone} />
+            <CardWithdrawForm familyId={familyId} memberId={memberId} members={(members || []).filter((m) => !m.removed_at)} categories={categories || []} amAdmin={amAdmin} card={card} cards={[card]} accounts={{ pool: poolAccounts, members: memberAccounts, cards: { [card.id]: cardAccount } }} onDone={handleDone} />
+          )}
+
+          {!card.archived && tab === "towallet" && (
+            <CardToWalletForm cardAccount={cardAccount} memberAccounts={memberAccounts} memberId={memberId} onDone={handleDone} />
           )}
 
           {tab === "history" && (
@@ -154,23 +216,30 @@ export default function CardDetailModal({
               {loading && <p className="hint">Loading...</p>}
               {!loading && history.length === 0 && <p className="hint">No activity yet.</p>}
               <ul className="txn-list">
-                {history.map((r) => (
+                {history.map((r) => editingId === r.id ? (
+                  <li key={`${r.kind}-${r.id}`} className="txn-edit-host">
+                    <CardSpendEditForm record={r} categories={categories} members={members} cardName={card.name}
+                      onSaved={() => { setEditingId(null); handleDone(); }} onCancel={() => setEditingId(null)}
+                      onDelete={canDelete(r) ? () => removeEntry(r) : undefined} />
+                  </li>
+                ) : (
                   <li key={`${r.kind}-${r.id}`}>
                     <div>
                       <span className="txn-amount">
                         {r.sign > 0 ? "+" : "-"}{fmtMoney(r.kind === "topup" ? r.amount : r.amount, cur)}
                       </span>
                       <span className="txn-meta">
-                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : "Spent"} ·{" "}
+                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : `Spent${categories?.find((c) => c.id === r.category_id) ? ` on ${categories.find((c) => c.id === r.category_id).name}` : ""}`}{sourceLabel(r)} ·{" "}
                         {members?.find((m) => m.id === r.member_id)?.display_name ?? "Unknown member"}
                         {r.tagged_member_id && r.tagged_member_id !== r.member_id &&
                           ` · for ${members?.find((m) => m.id === r.tagged_member_id)?.display_name ?? "a member"}`} · {fmtWhen(r.created_at)}
                       </span>
                     </div>
                     {r.note && <p className="txn-note">{r.note}</p>}
-                    {canDelete(r) && (
+                    {(canDelete(r) || canEdit(r)) && (
                       <div className="txn-actions">
-                        <button type="button" className="remove-btn" onClick={() => removeEntry(r)}>Delete</button>
+                        {canEdit(r) && <button type="button" onClick={() => setEditingId(r.id)}>Edit</button>}
+                        {canDelete(r) && <button type="button" className="remove-btn" onClick={() => removeEntry(r)}>Delete</button>}
                       </div>
                     )}
                   </li>
@@ -185,6 +254,7 @@ export default function CardDetailModal({
           )}
         </div>
       </div>
+      {dialog}
     </div>
   );
 }

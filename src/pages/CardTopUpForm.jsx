@@ -1,48 +1,40 @@
-import { useState } from "react";
+import MoveMoneyView from "../components/MoveMoneyView";
 import { createTransfer } from "../lib/wallets";
-import { formatMoney, parseNumber } from "../lib/format";
-import { MoneyInput, SelectInput } from "../components/Field";
 
-// Moves money from the family pool onto a shared prepaid card (same currency
-// as the card). Any member can do this; the database refuses if the pool
-// does not have enough. The tag is an optional label with no effect on limits.
-export default function CardTopUpForm({ cardAccount, poolAccounts, members, onDone }) {
-  const [amount, setAmount] = useState("");
-  const [tag, setTag] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
+// Moves money onto a shared prepaid card (same currency as the card) from the family pool
+// or from a member's own wallet. Members can use the pool or their own wallet; admins can
+// also use another member's wallet. The database refuses if the source does not have enough.
+// The "For" tag is an optional label with no effect on limits.
+export default function CardTopUpForm({ cardAccount, poolAccounts, memberAccounts, memberId, amAdmin, members, onDone }) {
   const cur = cardAccount.currency;
-  const pool = poolAccounts?.[cur];
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    const n = parseNumber(amount);
-    if (!(n > 0)) return setError("Enter an amount.");
-    setBusy(true);
-    setError(null);
-    try {
-      await createTransfer({ from: pool.id, to: cardAccount.id, amount: n, taggedMemberId: tag || null });
-      setAmount("");
-      onDone?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
+  const resolve = () => {
+    const sources = [];
+    if (poolAccounts?.[cur]) sources.push({ key: "pool", label: "Family pool", acct: poolAccounts[cur] });
+    const mine = memberAccounts?.[memberId]?.[cur];
+    if (mine) sources.push({ key: `m:${memberId}`, label: "My wallet", acct: mine });
+    if (amAdmin) {
+      for (const m of members || []) {
+        const a = memberAccounts?.[m.id]?.[cur];
+        if (a && m.id !== memberId) sources.push({ key: `m:${m.id}`, label: `${m.display_name}'s wallet`, acct: a });
+      }
     }
-  }
+    return { sources, to: { label: "This card", acct: cardAccount } };
+  };
 
   return (
-    <form onSubmit={handleSubmit} className="form-stack">
-      <p className="hint">Family pool has {formatMoney(pool?.balance_cache, cur)}. This card holds {cur}.</p>
-      <MoneyInput label="Amount" unit={cur} value={amount} onChange={setAmount} placeholder="0" required autoFocus />
-      <SelectInput label="For (optional)" value={tag} onChange={setTag} help="A label only. It does not change anyone's limit.">
-        <option value="">No one in particular</option>
-        {(members || []).map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
-      </SelectInput>
-      <button type="submit" className="btn btn-primary btn-block" disabled={busy || !pool}>
-        {busy ? "Adding..." : "Top up card"}
-      </button>
-      {error && <p className="status error">{error}</p>}
-    </form>
+    <MoveMoneyView
+      familyId={cardAccount.family_id}
+      fixedCurrency={cur}
+      resolve={resolve}
+      fromLabel="Take from"
+      verb={(a) => `Top up card · ${a}`}
+      note="Moving money onto a card is not spending. No limit changes."
+      members={(members || []).filter((m) => !m.removed_at)}
+      showTag
+      showWhen
+      submit={({ from, to, amount, tag, createdAt }) => createTransfer({ from: from.id, to: to.id, amount, taggedMemberId: tag, createdAt })}
+      onDone={onDone}
+    />
   );
 }

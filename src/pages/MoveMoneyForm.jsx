@@ -1,54 +1,29 @@
-import { useState } from "react";
+import MoveMoneyView from "../components/MoveMoneyView";
 import { createTransfer } from "../lib/wallets";
-import { formatMoney, parseNumber } from "../lib/format";
-import { MoneyInput, SelectInput } from "../components/Field";
 
 // Moves money between the family pool and the caller's own wallet, in either
 // direction. direction="in": pool -> my wallet. direction="out": my wallet -> pool.
 export default function MoveMoneyForm({ direction, memberId, accounts, onDone }) {
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-
   const mine = accounts.members[memberId] || {};
   const pool = accounts.pool;
-  const from = direction === "in" ? pool[currency] : mine[currency];
-  const to = direction === "in" ? mine[currency] : pool[currency];
+  const familyId = pool.USD?.family_id || pool.LBP?.family_id;
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    const n = parseNumber(amount);
-    if (!(n > 0)) return setError("Enter an amount.");
-    setBusy(true);
-    setError(null);
-    try {
-      await createTransfer({ from: from.id, to: to.id, amount: n });
-      setAmount("");
-      onDone?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const resolve = (cur) => {
+    const poolSide = { label: "Family pool", acct: pool[cur] };
+    const mineSide = { label: "My wallet", acct: mine[cur] };
+    const from = direction === "in" ? poolSide : mineSide;
+    const to = direction === "in" ? mineSide : poolSide;
+    return { sources: from.acct ? [{ key: "from", ...from }] : [], to };
+  };
 
   return (
-    <form onSubmit={handleSubmit} className="form-stack">
-      <p className="hint">
-        {direction === "in" ? "Family pool" : "Your wallet"} has {formatMoney(from?.balance_cache, currency)}
-      </p>
-      <div className="grid">
-        <MoneyInput label="Amount" unit={currency} value={amount} onChange={setAmount} placeholder="0" required autoFocus />
-        <SelectInput label="Currency" value={currency} onChange={setCurrency}>
-          <option value="USD">US dollars (USD)</option>
-          <option value="LBP">Lebanese pounds (LBP)</option>
-        </SelectInput>
-      </div>
-      <button type="submit" className="btn btn-primary btn-block" disabled={busy || !from || !to}>
-        {busy ? "Moving..." : direction === "in" ? "Take from pool" : "Return to pool"}
-      </button>
-      {error && <p className="status error">{error}</p>}
-    </form>
+    <MoveMoneyView
+      familyId={familyId}
+      resolve={resolve}
+      verb={(a) => (direction === "in" ? `Take ${a} from pool` : `Return ${a} to pool`)}
+      note="Moving money is not spending. No limit changes."
+      submit={({ from, to, amount }) => createTransfer({ from: from.id, to: to.id, amount })}
+      onDone={onDone}
+    />
   );
 }

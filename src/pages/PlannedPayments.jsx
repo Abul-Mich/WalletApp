@@ -1,4 +1,6 @@
 import { useState } from 'react'
+
+const BILLS_SHOWN = 5
 import { supabase } from '../supabaseClient'
 import { getExchangeRate } from '../lib/exchangeRates'
 import { createExpense, latestLbpRate } from '../lib/wallets'
@@ -131,6 +133,7 @@ export default function PlannedPayments({
     }
   }
 
+  const [showAll, setShowAll] = useState(false)
   const sorted = [...payments].sort(
     (a, b) => new Date(a.next_due_date) - new Date(b.next_due_date)
   )
@@ -139,7 +142,7 @@ export default function PlannedPayments({
     <div>
       {sorted.length === 0 && <p className="hint">No upcoming bills yet.</p>}
       <ul className="bill-list">
-        {sorted.map((p) => {
+        {(showAll ? sorted : sorted.slice(0, BILLS_SHOWN)).map((p) => {
           const days = daysUntil(p.next_due_date)
           const status = days < 0 ? 'overdue' : days <= 3 ? 'soon' : ''
           return (
@@ -182,6 +185,11 @@ export default function PlannedPayments({
           )
         })}
       </ul>
+      {sorted.length > BILLS_SHOWN && (
+        <button type="button" className="load-more" onClick={() => setShowAll((v) => !v)}>
+          {showAll ? 'Show fewer' : `Show all ${sorted.length} bills`}
+        </button>
+      )}
 
       <h3 className="subsection">Add a Bill</h3>
       <form onSubmit={handleAdd} className="inline-form">

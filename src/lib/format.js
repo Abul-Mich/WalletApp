@@ -59,3 +59,14 @@ export function parseNumber(input) {
   }
   return /^-?\d*\.?\d+$/.test(s) ? Number(s) : NaN;
 }
+
+// Re-express a typed amount when the currency switches, keeping its USD value the same
+// (so switching the pill never turns "$12" into "12 LBP"). Without a usable rate the
+// amount is cleared rather than guessed.
+export function convertAmountText(text, from, to, rate) {
+  if (from === to) return text;
+  const n = parseNumber(text);
+  const r = Number(rate);
+  if (!(n > 0) || !(r > 0)) return "";
+  return to === "LBP" ? String(Math.round(n * r)) : String(Math.round((n / r) * 100) / 100);
+}
