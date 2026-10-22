@@ -2066,3 +2066,21 @@ button.link-btn:hover {
 .pk-sheet .sf-footer { background: var(--surface); }
 .pk-err { font-size: 13px; color: var(--danger); }
 .pk-field > input[aria-invalid="true"] { border-color: var(--danger); }
+
+/* ---------- home spending: slim rows under the pockets carousel ---------- */
+.hs-slim { width: 100%; box-sizing: border-box; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); text-align: left; margin-bottom: 10px; padding: 10px 14px; cursor: pointer; font-weight: 400; display: flex; flex-direction: column; gap: 8px; }
+.hs-slim:hover { background: var(--surface); border-color: #2f3541; }
+.hs-slim-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; min-height: 48px; }
+.hs-slim-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hs-slim-text { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; font-size: 13px; }
+.hs-slim-text strong { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hs-slim-text strong.ok { color: var(--success); }
+.hs-slim-text strong.near { color: var(--warning); }
+.hs-slim-text strong.over { color: var(--danger); }
+.hs-muted { font-size: 12px; color: var(--text-muted); }
+.hs-resets { white-space: nowrap; }
+.hs-link { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 500; color: var(--accent-bright); white-space: nowrap; }
+.hs-bar { display: block; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.hs-fill { display: block; height: 100%; border-radius: 2px; background: var(--success); }
+.hs-fill.near { background: var(--warning); }
+.hs-fill.over { background: var(--danger); }
