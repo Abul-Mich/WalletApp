@@ -41,16 +41,18 @@ export async function loadAccounts(familyId) {
   return data || [];
 }
 
-// Group accounts: { pool:{USD,LBP}, members:{[memberId]:{USD,LBP}}, cards:{[cardId]:{USD,LBP}} }
+// Group accounts: { pool:{USD,LBP}, members:{[memberId]:{USD,LBP}}, cards:{[cardId]:account}, pockets:{[pocketId]:account} }
 // Each value is the account row (id, balance_cache, currency).
 export function groupAccounts(accounts) {
-  const out = { pool: {}, members: {}, cards: {} };
+  const out = { pool: {}, members: {}, cards: {}, pockets: {} };
   for (const a of accounts) {
     if (a.owner_kind === "pool") out.pool[a.currency] = a;
     else if (a.owner_kind === "member") {
       (out.members[a.member_id] ||= {})[a.currency] = a;
     } else if (a.owner_kind === "card") {
       out.cards[a.card_id] = a; // one account per card, single currency
+    } else if (a.owner_kind === "pocket") {
+      out.pockets[a.pocket_id] = a; // one account per pocket, single currency (what you can see: yours, or all for admins)
     }
   }
   return out;
@@ -317,3 +319,22 @@ export async function spendRollup({ familyId, from = null, to = null, memberId =
   if (error) throw new Error(error.message);
   return data;
 }
+
+// ---------- pockets (migration 0013) ----------
+
+export async function loadPockets(memberId) {
+  const { data, error } = await supabase
+    .from("pockets")
+    .select("*")
+    .eq("member_id", memberId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+export const createPocket = ({ familyId, name, currency, color = null, startAmount = null }) =>
+  call("create_pocket", { p_family_id: familyId, p_name: name, p_currency: currency, p_color: color, p_start_amount: startAmount });
+export const renamePocket = ({ id, name, color = null }) =>
+  call("rename_pocket", { p_id: id, p_name: name, p_color: color });
+export const setPocketArchived = ({ id, archived }) =>
+  call("set_pocket_archived", { p_id: id, p_archived: archived });

@@ -13,6 +13,8 @@ export default function FamilyBalanceCard({ accounts, rate, familyId, amAdmin, o
 
   const poolUsd = totalUsd(pool, rate);
   const membersUsd = members.reduce((s, p) => s + totalUsd(p, rate), 0);
+  const pockets = Object.values(accounts.pockets || {});
+  const pocketsUsd = pockets.reduce((s, a) => s + (a.currency === "USD" ? bal(a) : rate > 0 ? bal(a) / rate : 0), 0);
   const cardsUsd = cards.reduce(
     (s, a) => s + (a.currency === "USD" ? bal(a) : rate > 0 ? bal(a) / rate : 0), 0);
 
@@ -31,8 +33,8 @@ export default function FamilyBalanceCard({ accounts, rate, familyId, amAdmin, o
       <p className="hint">Money not yet taken by any member or card.</p>
       {rate > 0 && (
         <p className="hint">
-          Whole family: {formatUsd(poolUsd + membersUsd + cardsUsd)}
-          {" "}(pool {formatUsd(poolUsd)} · members {formatUsd(membersUsd)} · cards {formatUsd(cardsUsd)}) at {formatRate(rate)}.
+          Whole family: {formatUsd(poolUsd + membersUsd + cardsUsd + pocketsUsd)}
+          {" "}(pool {formatUsd(poolUsd)} · members {formatUsd(membersUsd)} · cards {formatUsd(cardsUsd)}{pockets.length > 0 && <> · {amAdmin ? "pockets" : "your pockets"} {formatUsd(pocketsUsd)}</>}) at {formatRate(rate)}.
         </p>
       )}
       {adding && (

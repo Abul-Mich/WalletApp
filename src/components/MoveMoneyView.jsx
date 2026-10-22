@@ -24,7 +24,7 @@ function nowLocal() {
 //   verb(amountText)  -> the button label, e.g. "Take $50.00 from pool".
 //   submit({ from, to, amount, currency, rate, tag, createdAt }) does the actual call.
 export default function MoveMoneyView({
-  familyId, resolve, fixedCurrency = null, outside = false, verb, note, members = [], showTag = false, showWhen = false,
+  familyId, resolve, fixedCurrency = null, fixedNoun = "card", outside = false, verb, note, members = [], showTag = false, showWhen = false,
   fromLabel, emptyText, submit, onDone,
 }) {
   const [currency, setCurrency] = useState(fixedCurrency || "USD");
@@ -105,7 +105,7 @@ export default function MoveMoneyView({
         <AmountHero
           value={amount} onChange={setAmount} currency={cur}
           onCurrency={fixedCurrency ? null : changeCurrency}
-          fixedNote={fixedCurrency ? `This card holds ${fixedCurrency}` : null}
+          fixedNote={fixedCurrency ? `This ${fixedNoun} holds ${fixedCurrency}` : null}
         >
           {approx && <span className="sf-muted sf-small">{approx}</span>}
           {chosen && (
