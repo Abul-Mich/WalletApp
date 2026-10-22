@@ -12,6 +12,7 @@ import CommonExpenses from "./CommonExpenses";
 import BottomNav from "./BottomNav";
 import AddActionSheet from "./AddActionSheet";
 import PocketsCard from "./PocketsCard";
+import { useHomeSpend, SpentChip, LimitCard } from "./HomeSpend";
 import TransactionHistoryModal from "./TransactionHistoryModal";
 import MeProfileCard from "./MeProfileCard";
 import MoneyHistoryAdmin from "./MoneyHistoryAdmin";
@@ -154,6 +155,7 @@ export default function Dashboard({ familyId }) {
   // current names without re-subscribing every time members/categories change.
   const membersRef = useRef(members);
   const categoriesRef = useRef(categories);
+  const homeSpend = useHomeSpend({ familyId, member: myMember, amAdmin: isAdmin(myMember?.role), triggers: [transactions, memberSpends, balanceTransfersReloadCounter] });
   const myMemberRef = useRef(myMember);
   membersRef.current = members;
   categoriesRef.current = categories;
@@ -999,8 +1001,6 @@ export default function Dashboard({ familyId }) {
         </div>
       </header>
 
-      <LimitWarningBanner spend={mySpend} />
-
       {myMember && (
         <PocketsCard
           familyId={familyId}
@@ -1022,17 +1022,11 @@ export default function Dashboard({ familyId }) {
         />
       )}
 
-      {mySpend && (
-        <section className="card">
-          <h2>My spending this period ({mySpend.period})</h2>
-          <p className="balance">
-            {formatUsd(mySpend.spent)} / {formatUsd(mySpend.limit)}
-          </p>
-          <p className="hint">
-            How much you've drawn from the family budget so far this period.
-          </p>
-        </section>
-      )}
+      {myMember && (amAdmin || !myMember.spending_limit_amount) && <SpentChip amount={homeSpend.month} everyone={amAdmin} onOpen={() => setView("statistics")} />}
+      <LimitCard limit={homeSpend.limit} onOpen={() => setView("statistics")} />
+
+      <LimitWarningBanner spend={homeSpend.limit} />
+
 
       {myMember && categories.length > 0 && (
         <section className="card">
