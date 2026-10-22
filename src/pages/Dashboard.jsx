@@ -11,7 +11,7 @@ import CardsSection from "./CardsSection";
 import CommonExpenses from "./CommonExpenses";
 import BottomNav from "./BottomNav";
 import AddActionSheet from "./AddActionSheet";
-import MyWalletsCard from "./MyWalletsCard";
+import PocketsCard from "./PocketsCard";
 import TransactionHistoryModal from "./TransactionHistoryModal";
 import MeProfileCard from "./MeProfileCard";
 import MoneyHistoryAdmin from "./MoneyHistoryAdmin";
@@ -1002,11 +1002,18 @@ export default function Dashboard({ familyId }) {
       <LimitWarningBanner spend={mySpend} />
 
       {myMember && (
-        <MyWalletsCard
+        <PocketsCard
+          familyId={familyId}
           memberId={myMember.id}
           accounts={accounts}
+          rawAccounts={rawAccounts}
+          cards={cards}
           wallets={myWallets}
+          rate={rate || 0}
+          onAddExpense={() => setShowAddSheet(true)}
+          onHistory={() => setShowMyHistoryModal(true)}
           onChanged={() => {
+            loadWallet();
             loadFamilyAndMembers();
             loadTransactions();
             loadMyRecentTransactions(myMember.id);

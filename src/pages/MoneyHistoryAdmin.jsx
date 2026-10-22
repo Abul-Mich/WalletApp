@@ -23,6 +23,8 @@ export default function MoneyHistoryAdmin({ familyId, rawAccounts, members, card
     if (a.owner_kind === "pool") return `Family pool ${a.currency}`;
     if (a.owner_kind === "member")
       return `${members.find((m) => m.id === a.member_id)?.display_name ?? "Member"} ${a.currency}`;
+    if (a.owner_kind === "pocket")
+      return `${members.find((x) => x.id === a.member_id)?.display_name ?? "Member"}'s pocket`;
     return `${cards.find((c) => c.id === a.card_id)?.name ?? "Card"}`;
   };
   const curOf = (id) => rawAccounts.find((x) => x.id === id)?.currency;
