@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../supabaseClient'
+import InstallApp from '../components/InstallApp'
 
 export default function MeProfileCard({ myMember, session, family, myRole, onSaved }) {
   const [editing, setEditing] = useState(false)
@@ -35,6 +36,7 @@ export default function MeProfileCard({ myMember, session, family, myRole, onSav
   return (
     <section className="card">
       <h2>Profile</h2>
+      <InstallApp />
 
       <div className="profile-field">
         <span className="profile-field-label">Name</span>
