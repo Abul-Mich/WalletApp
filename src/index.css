@@ -2155,3 +2155,6 @@ button.link-btn:hover {
 .bl-group-head.soon { color: #eab04d; }
 .bl-group-head.paid { color: var(--success); }
 .bl-title-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+.push-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.push-ok { color: var(--success); }
+.push-err { color: var(--danger); }
