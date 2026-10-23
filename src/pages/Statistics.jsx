@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../AuthContext";
 import { isAdmin } from "../lib/roles";
-import { loadAccounts, latestLbpRate, bal, spendRollup } from "../lib/wallets";
+import { loadAccounts, latestLbpRate, bal, spendRollup, INCOME_TYPES } from "../lib/wallets";
 import { formatUsd, formatShortDate, formatDate } from "../lib/format";
 import TransactionRow from "./TransactionRow";
 import {
@@ -86,7 +86,8 @@ export default function Statistics({ familyId }) {
   const [drillLimit, setDrillLimit] = useState(DRILL_PAGE);
   const [drillLoading, setDrillLoading] = useState(false);
 
-  const [rollup, setRollup] = useState({ total: 0, count: 0, daily: [], categories: [], people: [] });
+  const [rollup, setRollup] = useState({ total: 0, count: 0, income: 0, daily: [], categories: [], people: [] });
+  const [incomeRows, setIncomeRows] = useState([]);
   const [categories, setCategories] = useState([]);
   const [familyMoney, setFamilyMoney] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -121,8 +122,13 @@ export default function Statistics({ familyId }) {
           familyId, from: range.start.toISOString(), to: range.end.toISOString(),
           memberId: selectedMember !== "all" ? selectedMember : null,
         });
+        let incQ = supabase.from("deposits").select("*").eq("family_id", familyId).neq("kind", "reimbursement")
+          .gte("created_at", range.start.toISOString()).lt("created_at", range.end.toISOString());
+        if (selectedMember !== "all") incQ = incQ.eq("beneficiary_member_id", selectedMember);
+        const { data: inc } = await incQ.order("created_at", { ascending: false }).limit(50);
         if (cancelled) return;
 
+        setIncomeRows(inc || []);
         setMembers(fam || []);
         setMyMember(mine);
         setCategories(cats || []);
@@ -154,12 +160,17 @@ export default function Statistics({ familyId }) {
     const byCat = {};
     rollup.categories.forEach((g) => {
       const n = groupName(g);
-      const e = byCat[n] || (byCat[n] = { name: n, value: 0, count: 0, refs: [] });
+      const e = byCat[n] || (byCat[n] = { name: n, value: 0, count: 0, refs: [], reimbursed: 0 });
       e.value += Number(g.total);
+      if (g.kind === "reimbursement") {
+        // Money paid back lowers the category; it is not a record to list.
+        e.reimbursed += Math.abs(Number(g.total));
+        return;
+      }
       e.count += Number(g.count);
       e.refs.push({ kind: g.kind, categoryId: g.category_id });
     });
-    const cats = Object.values(byCat).map((c) => ({ ...c, value: Number(c.value.toFixed(2)) })).sort((a, b) => b.value - a.value);
+    const cats = Object.values(byCat).map((c) => ({ ...c, value: Number(c.value.toFixed(2)), reimbursed: Number(c.reimbursed.toFixed(2)) })).filter((c) => c.value > 0 || c.count > 0).sort((a, b) => b.value - a.value);
 
     const people = rollup.people.map((p) => ({
       name: (p.member_id ? members.find((m) => m.id === p.member_id)?.display_name : null) ?? "Shared family costs",
@@ -168,7 +179,7 @@ export default function Statistics({ familyId }) {
 
     const effectiveEnd = Math.min(range.end.getTime(), midnight(addDays(todayKey(), 1)).getTime());
     const days = Math.max(1, Math.round((effectiveEnd - range.start.getTime()) / 86400000));
-    return { total, trend, cats, people, avgDaily: total / days, top: cats[0] };
+    return { total, income: Number(rollup.income || 0), trend, cats, people, avgDaily: total / days, top: cats[0] };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rollup, categories, members, range]);
 
@@ -201,7 +212,7 @@ export default function Statistics({ familyId }) {
     return () => { cancelled = true; };
   }, [drill, drillLimit, familyId, selectedMember, range]);
 
-  const openDrill = (c) => { setDrillRows([]); setDrillLimit(DRILL_PAGE); setDrill({ name: c.name, refs: c.refs, total: c.value, count: c.count }); };
+  const openDrill = (c) => { setDrillRows([]); setDrillLimit(DRILL_PAGE); setDrill({ name: c.name, refs: c.refs, total: c.value, count: c.count, reimbursed: c.reimbursed }); };
   const periodText = `${formatDate(range.start)} – ${formatDate(new Date(range.end.getTime() - 1))}`;
 
   const tooltipStyle = {
@@ -260,6 +271,11 @@ export default function Statistics({ familyId }) {
               <div className="summary-meta">{rollup.count} record{Number(rollup.count) === 1 ? "" : "s"}</div>
             </div>
             <div className="summary-card">
+              <div className="summary-label">Money in</div>
+              <div className="summary-value stat-in">{stats.income > 0 ? "+" : ""}{formatUsd(stats.income)}</div>
+              <div className="summary-meta">{incomeRows.length} from outside</div>
+            </div>
+            <div className="summary-card">
               <div className="summary-label">Family money (USD)</div>
               <div className="summary-value">{formatUsd(familyMoney)}</div>
               <div className="summary-meta">Right now, all wallets</div>
@@ -305,7 +321,7 @@ export default function Statistics({ familyId }) {
                             <span className="cat-top">
                               <span className="cat-name">
                                 <span className="cat-swatch" style={{ background: colorFor(c.name) }} />
-                                <span>{c.name}</span>
+                                <span>{c.name}{c.reimbursed > 0 && <span className="cat-share"> · {formatUsd(c.reimbursed)} paid back</span>}</span>
                               </span>
                               <span className="cat-amount">{formatUsd(c.value)}<span className="cat-share">{Math.round(share * 100)}%</span></span>
                             </span>
@@ -319,6 +335,25 @@ export default function Statistics({ familyId }) {
                 </>
               )}
             </div>
+
+            {incomeRows.length > 0 && (
+              <div className="chart-card">
+                <h3>Money in</h3>
+                <ul className="cat-list">
+                  {incomeRows.slice(0, 10).map((r) => {
+                    const t = INCOME_TYPES.find((x) => x.key === r.kind)?.label || "Deposit";
+                    const who = members.find((m) => m.id === r.beneficiary_member_id)?.display_name;
+                    return (
+                      <li key={r.id} className="inc-row">
+                        <span><strong>{t}</strong><span className="cat-share"> {who ? `· ${who} ` : "· Family "}· {formatShortDate(r.created_at)}{r.note ? ` · ${r.note}` : ""}</span></span>
+                        <span className="stat-in">+{r.currency === "USD" ? formatUsd(r.amount) : `${Math.round(Number(r.amount)).toLocaleString("en-US")} LBP`}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {incomeRows.length > 10 && <p className="cat-hint">Showing the latest 10 of {incomeRows.length}.</p>}
+              </div>
+            )}
 
             {amAdmin && selectedMember === "all" && stats.people.length > 0 && (
               <div className="chart-card full-width">
@@ -337,7 +372,7 @@ export default function Statistics({ familyId }) {
             )}
           </div>
 
-          {Number(rollup.count) === 0 && (
+          {Number(rollup.count) === 0 && incomeRows.length === 0 && (
             <div className="empty-state"><p>No records found for this period and member.</p></div>
           )}
         </>
@@ -354,7 +389,7 @@ export default function Statistics({ familyId }) {
               </button>
             </div>
             <div className="sheet-body">
-              <p className="hint">{drill.count} record{drill.count === 1 ? "" : "s"} · {formatUsd(drill.total)} · {periodText}</p>
+              <p className="hint">{drill.count} record{drill.count === 1 ? "" : "s"} · {formatUsd(drill.total)}{drill.reimbursed > 0 ? ` after ${formatUsd(drill.reimbursed)} paid back` : ""} · {periodText}</p>
               <ul className="txn-list">
                 {drillRows.map((r) => (
                   <TransactionRow key={`${r.kind}-${r.id}`} t={r} categories={categories} members={members} canManage={false} onChanged={() => {}} />

@@ -136,6 +136,7 @@ export default function Dashboard({ familyId }) {
   const [notifications, setNotifications] = useState([]);
   const [view, setView] = useState("home"); // 'home' | 'settings' | 'family' | 'me'
   const [showAddSheet, setShowAddSheet] = useState(false);
+  const [addOpts, setAddOpts] = useState({}); // {tab, dest} to open the + sheet on a given tab
   const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
   const [showFamilyHistoryModal, setShowFamilyHistoryModal] = useState(false);
   const [myRecentTransactions, setMyRecentTransactions] = useState([]);
@@ -629,7 +630,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            onClose={() => setShowAddSheet(false)}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -824,7 +825,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            onClose={() => setShowAddSheet(false)}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -897,7 +898,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            onClose={() => setShowAddSheet(false)}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -960,7 +961,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            onClose={() => setShowAddSheet(false)}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -1010,7 +1011,8 @@ export default function Dashboard({ familyId }) {
           cards={cards}
           wallets={myWallets}
           rate={rate || 0}
-          onAddExpense={() => setShowAddSheet(true)}
+          onAddExpense={() => { setAddOpts({}); setShowAddSheet(true); }}
+          onAddMoney={(dest) => { setAddOpts({ tab: "income", dest }); setShowAddSheet(true); }}
           onHistory={() => setShowMyHistoryModal(true)}
           onChanged={() => {
             loadWallet();
@@ -1094,7 +1096,7 @@ export default function Dashboard({ familyId }) {
           members={members}
           cards={cards}
           amAdmin={amAdmin}
-          onClose={() => setShowAddSheet(false)}
+          initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
           onDone={() => {
             loadFamilyAndMembers();
             loadTransactions();
