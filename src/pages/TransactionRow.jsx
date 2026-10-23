@@ -172,8 +172,8 @@ export default function TransactionRow({ t, categories, members, canManage, onCh
   return (
     <li>
       <div>
-        <span className="txn-amount">
-          {formatUsd(-net)}
+        <span className={`txn-amount ${net < 0 ? "pos" : ""}`}>
+          {net < 0 ? "+" : ""}{formatUsd(-net)}
           {t.currency && t.currency !== "USD" && (
             <span className="txn-converted"> ({formatMoney(t.amount, t.currency)})</span>
           )}

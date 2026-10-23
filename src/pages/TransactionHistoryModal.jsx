@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 import TransactionRow from "./TransactionRow";
+import IncomeRow from "./IncomeRow";
+import { loadIncomeRows } from "../lib/wallets";
 
 const PAGE_SIZE = 20;
 
@@ -106,10 +108,11 @@ export default function TransactionHistoryModal({
     if (reset) setLoading(true);
     else setLoadingMore(true);
 
-    const [{ data: normalRows }, { data: cardRows }, { data: commonRows }] = await Promise.all([
+    const [{ data: normalRows }, { data: cardRows }, { data: commonRows }, incomeRows] = await Promise.all([
       buildTransactionQuery(from, to),
       buildCardQuery(from, to),
       buildCommonQuery(from, to),
+      loadIncomeRows({ familyId, memberId: memberId || filterMemberId || null, categoryId, dateFrom, dateTo, search, from, to }),
     ]);
 
     const normal = (normalRows || []).map((t) => ({
@@ -118,7 +121,7 @@ export default function TransactionHistoryModal({
     }));
     const cards = (cardRows || []).map((t) => ({ ...t, kind: "card" }));
     const commons = (commonRows || []).map((t) => ({ ...t, kind: "common" }));
-    const chunk = [...normal, ...cards, ...commons].sort(
+    const chunk = [...normal, ...cards, ...commons, ...incomeRows].sort(
       (a, b) => new Date(b.created_at) - new Date(a.created_at),
     );
 
@@ -126,7 +129,8 @@ export default function TransactionHistoryModal({
     setHasMore(
       (normalRows?.length ?? 0) === PAGE_SIZE ||
       (cardRows?.length ?? 0) === PAGE_SIZE ||
-      (commonRows?.length ?? 0) === PAGE_SIZE,
+      (commonRows?.length ?? 0) === PAGE_SIZE ||
+      incomeRows.length === PAGE_SIZE,
     );
     setPage(nextPage);
     setLoading(false);
@@ -155,7 +159,7 @@ export default function TransactionHistoryModal({
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-handle" />
         <div className="sheet-header">
-          <h2>{memberId ? "My transactions" : "Family transactions"}</h2>
+          <h2>{memberId ? "My records" : "Family records"}</h2>
           <button
             type="button"
             className="sheet-close"
@@ -246,12 +250,17 @@ export default function TransactionHistoryModal({
           {!loading && rows.length === 0 && (
             <p className="hint">
               {filtersActive
-                ? "No transactions match these filters."
-                : "No transactions yet."}
+                ? "No records match these filters."
+                : "No records yet."}
             </p>
           )}
           <ul className="txn-list">
-            {rows.map((t) => (
+            {rows.map((t) => t.kind === "income" ? (
+              <IncomeRow
+                key={`income-${t.id}`} t={t} categories={categories} members={members}
+                canManage={amAdmin || t.added_by_member_id === effectiveViewerId} onChanged={handleChanged}
+              />
+            ) : (
               <TransactionRow
                 key={t.id}
                 t={t}

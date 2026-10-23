@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../AuthContext";
 import TransactionRow from "./TransactionRow";
+import IncomeRow from "./IncomeRow";
 import ExchangeRateOverride from "./ExchangeRateOverride";
 import AdminSettings from "./AdminSettings";
 import LimitWarningBanner from "./LimitWarningBanner";
@@ -18,7 +19,7 @@ import MeProfileCard from "./MeProfileCard";
 import MoneyHistoryAdmin from "./MoneyHistoryAdmin";
 import FamilyBalanceCard from "./FamilyBalanceCard";
 import Statistics from "./Statistics";
-import { getMemberSpend, loadAccounts, groupAccounts, latestLbpRate, createInvite, bal } from "../lib/wallets";
+import { getMemberSpend, loadIncomeRows, loadAccounts, groupAccounts, latestLbpRate, createInvite, bal } from "../lib/wallets";
 import { getFamilyBudgetSpend } from "../lib/budgets";
 import { isAdmin, isSuperadmin } from "../lib/roles";
 import { formatUsd, formatLbp } from "../lib/format";
@@ -281,7 +282,7 @@ export default function Dashboard({ familyId }) {
   async function loadMyRecentTransactions(memberId) {
     if (!memberId) return;
 
-    const [{ data: normalRows }, { data: cardRows }, { data: commonRows }] = await Promise.all([
+    const [{ data: normalRows }, { data: cardRows }, { data: commonRows }, incomeRows] = await Promise.all([
       supabase
         .from("transactions")
         .select("*")
@@ -303,9 +304,11 @@ export default function Dashboard({ familyId }) {
         .eq("tagged_member_id", memberId)
         .order("created_at", { ascending: false })
         .limit(5),
+      loadIncomeRows({ familyId, memberId, from: 0, to: 4 }),
     ]);
 
     const rows = [
+      ...incomeRows,
       ...(normalRows || []).map((t) => ({ ...t, kind: "transaction" })),
       ...(cardRows || []).map((t) => ({ ...t, kind: "card" })),
       ...(commonRows || []).map((t) => ({ ...t, kind: "common" })),
@@ -1049,7 +1052,7 @@ export default function Dashboard({ familyId }) {
 
       <section className="card">
         <div className="card-header-row">
-          <h2>Recent expenses</h2>
+          <h2>Recent records</h2>
           {myRecentTransactions.length > 0 && (
             <button
               type="button"
@@ -1061,10 +1064,21 @@ export default function Dashboard({ familyId }) {
           )}
         </div>
         {myRecentTransactions.length === 0 && (
-          <p className="hint">No transactions yet.</p>
+          <p className="hint">No records yet.</p>
         )}
         <ul className="txn-list">
-          {myRecentTransactions.map((t) => (
+          {myRecentTransactions.map((t) => t.kind === "income" ? (
+            <IncomeRow
+              key={`income-${t.id}`} t={t} categories={categories} members={allMembers}
+              canManage={amAdmin || t.added_by_member_id === myMember?.id}
+              onChanged={() => {
+                loadTransactions();
+                loadFamilyAndMembers();
+                loadWallet();
+                if (myMember?.id) loadMyRecentTransactions(myMember.id);
+              }}
+            />
+          ) : (
             <TransactionRow
               key={t.id}
               t={t}

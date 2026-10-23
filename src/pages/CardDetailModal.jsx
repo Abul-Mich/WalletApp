@@ -239,7 +239,7 @@ export default function CardDetailModal({
                 ) : (
                   <li key={`${r.kind}-${r.id}`}>
                     <div>
-                      <span className="txn-amount">
+                      <span className={`txn-amount ${r.sign > 0 ? "pos" : ""}`}>
                         {r.sign > 0 ? "+" : "-"}{fmtMoney(r.kind === "topup" ? r.amount : r.amount, cur)}
                       </span>
                       <span className="txn-meta">
