@@ -5,6 +5,7 @@ import { formatMoney, formatUsd, formatLbp, formatShortDate, parseNumber } from 
 import MoveMoneyView from "../components/MoveMoneyView";
 import MemberBalanceTransfer from "./MemberBalanceTransfer";
 import AddToMainBalanceForm from "./AddToMainBalanceForm";
+import IncomeEditSheet from "./IncomeEditSheet";
 import { useConfirm } from "../components/ConfirmSheet";
 
 // "Your money": the main wallet (cash in hand) and the member's pockets as one swipeable,
@@ -274,6 +275,7 @@ function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose,
   const [all, setAll] = useState(false);
   const isMain = item.kind === "main";
   const { ask, dialog } = useConfirm();
+  const [editRec, setEditRec] = useState(null);
 
   useEffect(() => {
     let live = true;
@@ -307,7 +309,7 @@ function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose,
         const cur = d.currency || rawAccounts.find((x) => x.id === d.account_id)?.currency;
         const name = INCOME_TYPES.find((x) => x.key === d.kind)?.label;
         rows.push({
-          id: `d${d.id}`, at: d.created_at, income: true, depositId: d.kind === "deposit" ? null : d.id,
+          id: `d${d.id}`, at: d.created_at, income: true, depositId: d.kind === "deposit" ? null : d.id, deposit: d.kind === "deposit" ? null : d,
           title: name ? `${name}, from outside` : "From outside", note: d.note, amount: `+${formatMoney(d.amount, cur)}`,
         });
       }
@@ -343,6 +345,9 @@ function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose,
             <span><span className="pk-move-t">{m.title}</span><span className="pk-move-d">{m.date}{m.note ? ` · ${m.note}` : ""}</span></span>
             <span className={`pk-move-a ${m.income ? "pk-in" : ""}`}>
               {m.amount}
+              {m.deposit && (
+                <button type="button" className="pk-move-x pk-move-e" aria-label="Edit this entry" onClick={() => setEditRec(m.deposit)}>✎</button>
+              )}
               {m.depositId && (
                 <button type="button" className="pk-move-x" aria-label="Delete this entry" onClick={() => ask({
                   title: "Delete this entry?", detail: `${m.title} · ${m.amount}`, effect: "The money is taken out of this wallet again.", confirmLabel: "Delete",
@@ -355,6 +360,9 @@ function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose,
         {!all && moves && moves.length > 3 && <button type="button" className="pk-more" onClick={() => setAll(true)}>Show more</button>}
       </div>
       {!isMain && <button type="button" className="pk-edit-link" onClick={() => onAction("edit")}>Rename or archive this pocket</button>}
+      {editRec && (
+        <IncomeEditSheet record={editRec} onClose={() => setEditRec(null)} onSaved={() => { setEditRec(null); onChangedInside(); }} />
+      )}
       {dialog}
     </Sheet>
   );

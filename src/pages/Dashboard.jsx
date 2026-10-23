@@ -1144,7 +1144,7 @@ export default function Dashboard({ familyId }) {
           {myRecentTransactions.map((t) => t.kind === "income" ? (
             <IncomeRow
               key={`income-${t.id}`} t={t} categories={categories} members={allMembers}
-              canManage={amAdmin || t.added_by_member_id === myMember?.id}
+              canManage={amAdmin || t.added_by_member_id === myMember?.id} amAdmin={amAdmin}
               onChanged={() => {
                 loadTransactions();
                 loadFamilyAndMembers();

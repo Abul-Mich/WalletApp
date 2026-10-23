@@ -5,6 +5,7 @@ import { isAdmin } from "../lib/roles";
 import { loadAccounts, latestLbpRate, bal, spendRollup, INCOME_TYPES } from "../lib/wallets";
 import { formatUsd, formatShortDate, formatDate } from "../lib/format";
 import TransactionRow from "./TransactionRow";
+import IncomeRow from "./IncomeRow";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -163,8 +164,10 @@ export default function Statistics({ familyId }) {
       const e = byCat[n] || (byCat[n] = { name: n, value: 0, count: 0, refs: [], reimbursed: 0 });
       e.value += Number(g.total);
       if (g.kind === "reimbursement") {
-        // Money paid back lowers the category; it is not a record to list.
+        // Money paid back lowers the category; its records are listed too (shown as positive).
         e.reimbursed += Math.abs(Number(g.total));
+        e.count += Number(g.count);
+        e.refs.push({ kind: "reimbursement", categoryId: g.category_id });
         return;
       }
       e.count += Number(g.count);
@@ -193,13 +196,15 @@ export default function Statistics({ familyId }) {
       try {
         const who = selectedMember !== "all" ? selectedMember : null;
         const lists = await Promise.all(drill.refs.map(async (ref) => {
-          let q = supabase.from(TABLE_OF[ref.kind]).select("*").eq("family_id", familyId)
+          const reimb = ref.kind === "reimbursement";
+          let q = supabase.from(reimb ? "deposits" : TABLE_OF[ref.kind]).select("*").eq("family_id", familyId)
+            .match(reimb ? { kind: "reimbursement" } : {})
             .gte("created_at", range.start.toISOString()).lt("created_at", range.end.toISOString());
           q = ref.categoryId ? q.eq("category_id", ref.categoryId) : q.is("category_id", null);
-          if (who) q = ref.kind === "transaction" ? q.eq("member_id", who) : q.eq("tagged_member_id", who);
+          if (who) q = ref.kind === "transaction" ? q.eq("member_id", who) : reimb ? q.eq("beneficiary_member_id", who) : q.eq("tagged_member_id", who);
           const { data, error } = await q.order("created_at", { ascending: false }).limit(drillLimit);
           if (error) throw error;
-          return (data || []).map((r) => ({ ...r, kind: ref.kind }));
+          return (data || []).map((r) => (reimb ? { ...r, deposit_kind: "reimbursement", kind: "income" } : { ...r, kind: ref.kind }));
         }));
         if (cancelled) return;
         setDrillRows(lists.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, drillLimit));
@@ -391,7 +396,9 @@ export default function Statistics({ familyId }) {
             <div className="sheet-body">
               <p className="hint">{drill.count} record{drill.count === 1 ? "" : "s"} · {formatUsd(drill.total)}{drill.reimbursed > 0 ? ` after ${formatUsd(drill.reimbursed)} paid back` : ""} · {periodText}</p>
               <ul className="txn-list">
-                {drillRows.map((r) => (
+                {drillRows.map((r) => r.kind === "income" ? (
+                  <IncomeRow key={`income-${r.id}`} t={r} categories={categories} members={members} canManage={false} onChanged={() => {}} />
+                ) : (
                   <TransactionRow key={`${r.kind}-${r.id}`} t={r} categories={categories} members={members} canManage={false} onChanged={() => {}} />
                 ))}
               </ul>

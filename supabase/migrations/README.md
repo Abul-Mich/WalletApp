@@ -59,3 +59,6 @@ Run `supabase/audit/integrity_check.sql` now and then (read-only). No rows retur
 - 0015: period_spend (limit gauge, admin limits overview, category and family budgets) also subtracts reimbursements, matching spend_rollup from 0014. Rollback: rollback/0015_down.sql.
 
 - 0016: phone alerts. Adds push_subscriptions (one row per device, closed to the app) plus save_push_subscription / remove_push_subscription. The morning sender is the Edge Function in supabase/functions/send-bill-alerts (setup steps in its README). Rollback: rollback/0016_down.sql.
+
+- 0017: money added to the pool or a card can say who it counts for (create_income gets p_beneficiary_member_id). Rollback: rollback/0017_down.sql.
+- 0018: edit money-in records (update_income) and family bills (update_common_bill). Rollback: rollback/0018_down.sql.

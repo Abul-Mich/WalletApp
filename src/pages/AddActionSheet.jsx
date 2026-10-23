@@ -43,7 +43,7 @@ export default function AddActionSheet({ familyId, memberId, categories, account
           {tab === "income" && (
             <IncomeForm
               familyId={familyId} memberId={memberId} categories={categories} accounts={accounts}
-              cards={cards || []} amAdmin={amAdmin} presetDest={presetDest} onDone={handleDone}
+              cards={cards || []} members={members || []} amAdmin={amAdmin} presetDest={presetDest} onDone={handleDone}
             />
           )}
           {tab === "exchange" && <ExchangeForm familyId={familyId} memberId={memberId} accounts={accounts} amAdmin={amAdmin} onDone={handleDone} />}

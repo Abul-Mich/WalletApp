@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import IncomeEditSheet from "./IncomeEditSheet";
 import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
 import CardSpendEditForm from "./CardSpendEditForm";
@@ -25,6 +26,7 @@ export default function CardDetailModal({
   const [cardError, setCardError] = useState(null);
   const cur = cardAccount.currency;
   const { ask, dialog } = useConfirm();
+  const [editIncome, setEditIncome] = useState(null);
 
   async function loadHistory(nextLimit) {
     setLoading(true);
@@ -219,7 +221,7 @@ export default function CardDetailModal({
 
           {!card.archived && amAdmin && tab === "income" && (
             <IncomeForm
-              familyId={familyId} memberId={memberId} categories={categories || []} cards={[card]} amAdmin={amAdmin}
+              familyId={familyId} memberId={memberId} categories={categories || []} cards={[card]} members={members || []} amAdmin={amAdmin}
               accounts={{ pool: poolAccounts, members: memberAccounts, cards: { [card.id]: cardAccount }, pockets: {} }}
               presetDest={`card:${card.id}`} onDone={handleDone}
             />
@@ -253,6 +255,7 @@ export default function CardDetailModal({
                     {(canDelete(r) || canEdit(r)) && (
                       <div className="txn-actions">
                         {canEdit(r) && <button type="button" onClick={() => setEditingId(r.id)}>Edit</button>}
+                        {r.kind === "income" && canDelete(r) && <button type="button" onClick={() => setEditIncome(r)}>Edit</button>}
                         {canDelete(r) && <button type="button" className="remove-btn" onClick={() => removeEntry(r)}>Delete</button>}
                       </div>
                     )}
@@ -268,6 +271,10 @@ export default function CardDetailModal({
           )}
         </div>
       </div>
+      {editIncome && (
+        <IncomeEditSheet record={editIncome} kind={editIncome.deposit_kind} categories={categories} members={members} amAdmin={amAdmin}
+          onClose={() => setEditIncome(null)} onSaved={() => { setEditIncome(null); handleDone(); }} />
+      )}
       {dialog}
     </div>
   );

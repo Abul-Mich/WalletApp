@@ -258,7 +258,7 @@ export default function TransactionHistoryModal({
             {rows.map((t) => t.kind === "income" ? (
               <IncomeRow
                 key={`income-${t.id}`} t={t} categories={categories} members={members}
-                canManage={amAdmin || t.added_by_member_id === effectiveViewerId} onChanged={handleChanged}
+                canManage={amAdmin || t.added_by_member_id === effectiveViewerId} amAdmin={amAdmin} onChanged={handleChanged}
               />
             ) : (
               <TransactionRow
