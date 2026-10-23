@@ -6,7 +6,10 @@ import IncomeRow from "./IncomeRow";
 import ExchangeRateOverride from "./ExchangeRateOverride";
 import AdminSettings from "./AdminSettings";
 import LimitWarningBanner from "./LimitWarningBanner";
-import PlannedPayments from "./PlannedPayments";
+import BillsCard from "./BillsCard";
+import BillsPage from "./BillsPage";
+import BillSheets from "./BillSheets";
+import { useBills } from "../lib/bills";
 import NotificationBell from "./NotificationBell";
 import CardsSection from "./CardsSection";
 import CommonExpenses from "./CommonExpenses";
@@ -135,7 +138,7 @@ export default function Dashboard({ familyId }) {
   const [familyBudgetSpend, setFamilyBudgetSpend] = useState(null);
   const [plannedPayments, setPlannedPayments] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [view, setView] = useState("home"); // 'home' | 'settings' | 'family' | 'me'
+  const [view, setView] = useState("home"); // 'home' | 'settings' | 'family' | 'me' | 'statistics' | 'bills'
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addOpts, setAddOpts] = useState({}); // {tab, dest} to open the + sheet on a given tab
   const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
@@ -158,6 +161,8 @@ export default function Dashboard({ familyId }) {
   const membersRef = useRef(members);
   const categoriesRef = useRef(categories);
   const homeSpend = useHomeSpend({ familyId, member: myMember, amAdmin: isAdmin(myMember?.role), triggers: [transactions, memberSpends, balanceTransfersReloadCounter] });
+  const billsData = useBills({ familyId, member: myMember, triggers: [plannedPayments, commonReloadCounter, balanceTransfersReloadCounter] });
+  const [billSheet, setBillSheet] = useState(null); // { type: "pay", bill } | { type: "add", preset }
   const myMemberRef = useRef(myMember);
   membersRef.current = members;
   categoriesRef.current = categories;
@@ -546,6 +551,25 @@ export default function Dashboard({ familyId }) {
   const accounts = groupAccounts(rawAccounts);
   const myWallets = myMember ? accounts.members[myMember.id] || {} : {};
 
+  // Paying, adding or deleting a bill changes wallets, records and the bills lists.
+  function afterBillChange() {
+    billsData.reload();
+    loadWallet();
+    loadFamilyAndMembers();
+    loadTransactions();
+    loadPlannedPayments();
+    if (myMember?.id) loadMyRecentTransactions(myMember.id);
+    setCommonReloadCounter((c) => c + 1);
+    setBalanceTransfersReloadCounter((c) => c + 1);
+  }
+  const billSheets = myMember ? (
+    <BillSheets
+      sheet={billSheet} onClose={() => setBillSheet(null)} onDone={() => { setBillSheet(null); afterBillChange(); }}
+      familyId={familyId} memberId={myMember.id} categories={categories} members={members} cards={cards}
+      accounts={accounts} amAdmin={amAdmin} defaultRate={rate || billsData.rate || 0}
+    />
+  ) : null;
+
   if (view === "settings" && amAdmin) {
     return (
       <div className="dashboard">
@@ -749,6 +773,7 @@ export default function Dashboard({ familyId }) {
           cards={cards}
           reloadTrigger={commonReloadCounter}
           onChanged={loadWallet}
+          onOpenBills={() => setView("bills")}
         />
 
         <section className="card">
@@ -976,6 +1001,63 @@ export default function Dashboard({ familyId }) {
     );
   }
 
+  if (view === "bills") {
+    return (
+      <div className="dashboard">
+        <header>
+          <button
+            type="button"
+            className="back-btn"
+            onClick={() => setView("home")}
+          >
+            &larr;
+          </button>
+          <h1>Bills</h1>
+          <ProfileMenuButton
+            myMember={myMember}
+            myRole={myRole}
+            amAdmin={amAdmin}
+            showSettings={amAdmin}
+            onOpenSettings={() => setView("settings")}
+            onSignOut={() => supabase.auth.signOut()}
+          />
+        </header>
+
+        <BillsPage
+          items={billsData.items} paid={billsData.paid} loaded={billsData.loaded} rate={rate || billsData.rate || 0}
+          amAdmin={amAdmin} accounts={accounts} memberId={myMember?.id}
+          onPay={(bill) => setBillSheet({ type: "pay", bill })}
+          onAdd={(preset) => setBillSheet({ type: "add", preset })}
+        />
+
+        <BottomNav
+          active="dashboard"
+          onChange={handleNavChange}
+          onAddClick={() => setShowAddSheet(true)}
+        />
+        {billSheets}
+        {showAddSheet && myMember && (
+          <AddActionSheet
+            familyId={familyId}
+            limits={{ me: mySpend, members: memberSpends, family: familyBudgetSpend }}
+            memberId={myMember.id}
+            categories={categories}
+            accounts={accounts}
+            members={members}
+            cards={cards}
+            amAdmin={amAdmin}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+            onDone={() => {
+              loadFamilyAndMembers();
+              loadTransactions();
+              loadMyRecentTransactions(myMember.id);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard">
       <header>
@@ -1033,21 +1115,13 @@ export default function Dashboard({ familyId }) {
       <LimitWarningBanner spend={homeSpend.limit} />
 
 
-      {myMember && categories.length > 0 && (
-        <section className="card">
-          <h2>Upcoming bills</h2>
-          <PlannedPayments
-            familyId={familyId}
-            memberId={myMember.id}
-            categories={categories}
-            payments={plannedPayments}
-            onDone={() => {
-              loadPlannedPayments();
-              loadTransactions();
-              loadFamilyAndMembers();
-            }}
-          />
-        </section>
+      {myMember && (
+        <BillsCard
+          items={billsData.items} paid={billsData.paid} loaded={billsData.loaded} amAdmin={amAdmin}
+          onOpen={() => setView("bills")}
+          onPay={(bill) => setBillSheet({ type: "pay", bill })}
+          onAdd={() => setBillSheet({ type: "add", preset: "mine" })}
+        />
       )}
 
       <section className="card">
@@ -1094,6 +1168,8 @@ export default function Dashboard({ familyId }) {
           ))}
         </ul>
       </section>
+
+      {billSheets}
 
       <BottomNav
         active="dashboard"
