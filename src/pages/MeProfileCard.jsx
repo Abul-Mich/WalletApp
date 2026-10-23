@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import InstallApp from '../components/InstallApp'
+import PushToggle from '../components/PushToggle'
 
 export default function MeProfileCard({ myMember, session, family, myRole, onSaved }) {
   const [editing, setEditing] = useState(false)
@@ -37,6 +38,7 @@ export default function MeProfileCard({ myMember, session, family, myRole, onSav
     <section className="card">
       <h2>Profile</h2>
       <InstallApp />
+      <PushToggle />
 
       <div className="profile-field">
         <span className="profile-field-label">Name</span>

@@ -25,3 +25,5 @@ yarn-debug.log*
 yarn-error.log*
 
 *.zip
+
+supabase/push_schedule.example.env.sql

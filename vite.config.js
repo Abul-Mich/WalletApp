@@ -29,6 +29,7 @@ export default defineConfig({
       },
       workbox: {
         // App shell + the self-hosted font only. Data requests to Supabase are never cached.
+        importScripts: ['push-sw.js'],
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
         globIgnores: ['**/inter-cyrillic*', '**/inter-greek*', '**/inter-vietnamese*'],
         navigateFallback: '/index.html',

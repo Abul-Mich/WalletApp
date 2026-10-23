@@ -138,7 +138,7 @@ export default function Dashboard({ familyId }) {
   const [familyBudgetSpend, setFamilyBudgetSpend] = useState(null);
   const [plannedPayments, setPlannedPayments] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [view, setView] = useState("home"); // 'home' | 'settings' | 'family' | 'me' | 'statistics' | 'bills'
+  const [view, setView] = useState(() => (new URLSearchParams(window.location.search).get("view") === "bills" ? "bills" : "home")); // 'home' | 'settings' | 'family' | 'me' | 'statistics' | 'bills'
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addOpts, setAddOpts] = useState({}); // {tab, dest} to open the + sheet on a given tab
   const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
