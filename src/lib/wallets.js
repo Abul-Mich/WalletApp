@@ -11,6 +11,8 @@ export const USD = "USD";
 // Turn raw database errors into something a family member can act on.
 export function friendlyError(err) {
   const msg = (err && err.message) || String(err || "Something went wrong");
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg))
+    return "You seem to be offline. Check your connection and try again.";
   if (/not enough balance|negative|nonneg/i.test(msg))
     return "Not enough money in that wallet.";
   if (/rate/i.test(msg) && /(range|band|within|outside)/i.test(msg))

@@ -5,8 +5,9 @@ import Login from './pages/Login'
 import FamilySetup from './pages/FamilySetup'
 import Dashboard from './pages/Dashboard'
 import ResetPassword from './pages/ResetPassword'
+import PwaStatus from './components/PwaStatus'
 
-export default function App() {
+function Screens() {
   const { session, loading, passwordRecovery } = useAuth()
   const [checkingMembership, setCheckingMembership] = useState(true)
   const [familyId, setFamilyId] = useState(null)
@@ -63,4 +64,13 @@ export default function App() {
   if (!session) return <Login />
   if (!familyId) return <FamilySetup onFamilyReady={setFamilyId} />
   return <Dashboard familyId={familyId} />
+}
+
+export default function App() {
+  return (
+    <>
+      <Screens />
+      <PwaStatus />
+    </>
+  )
 }
