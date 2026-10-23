@@ -952,6 +952,8 @@ button.link-btn:hover {
   color: var(--danger);
   white-space: nowrap;
 }
+.txn-amount.pos { color: var(--success); }
+.txn-amount.neutral { color: var(--text-muted); }
 
 .txn-meta {
   font-size: 12px;

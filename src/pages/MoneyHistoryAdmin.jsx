@@ -100,7 +100,7 @@ export default function MoneyHistoryAdmin({ familyId, rawAccounts, members, card
         {rows.map((r) => (
           <li key={`${r.kind}-${r.id}`}>
             <div>
-              <span className="txn-amount">{amountOf(r)}</span>
+              <span className={`txn-amount ${r.kind === "transfer" || r.kind === "exchange" ? "neutral" : Number(r.amount) > 0 ? "pos" : ""}`}>{amountOf(r)}</span>
               <span className="txn-meta">{metaOf(r)} · {fmtWhen(r.created_at)}</span>
             </div>
             {r.note && <p className="txn-note">{r.note}</p>}

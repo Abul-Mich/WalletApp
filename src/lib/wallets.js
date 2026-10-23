@@ -189,6 +189,21 @@ export const createIncome = ({ accountId, amount, kind, lbpPerUsd = null, catego
   });
 export const deleteIncome = (id) => call("delete_income", { p_id: id });
 
+// Outside-money records for the records lists (never the old pool deposits). Rows come back with kind "income"
+// and the deposit's own kind in deposit_kind. memberId = the wallet owner it was added for.
+export async function loadIncomeRows({ familyId, memberId = null, categoryId = null, dateFrom = "", dateTo = "", search = "", from = 0, to = 4 }) {
+  let q = supabase.from("deposits").select("*").eq("family_id", familyId).neq("kind", "deposit")
+    .order("created_at", { ascending: false }).range(from, to);
+  if (memberId) q = q.eq("beneficiary_member_id", memberId);
+  if (categoryId) q = q.eq("category_id", categoryId);
+  if (dateFrom) q = q.gte("created_at", `${dateFrom}T00:00:00`);
+  if (dateTo) q = q.lte("created_at", `${dateTo}T23:59:59`);
+  if (search.trim()) q = q.ilike("note", `%${search.trim()}%`);
+  const { data, error } = await q;
+  if (error) return [];
+  return (data || []).map((r) => ({ ...r, deposit_kind: r.kind, kind: "income" }));
+}
+
 // ---------- transfers / exchange ----------
 export const createTransfer = ({ from, to, amount, note, createdAt, taggedMemberId }) =>
   call("create_transfer", {
