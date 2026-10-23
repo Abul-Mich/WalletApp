@@ -39,7 +39,7 @@ function daysUntil(dateStr) {
 
 // Family-wide costs paid from the pool (admins record them; everyone can see them).
 // They count toward the family budget, never toward a member's personal limit.
-export default function CommonExpenses({ familyId, members, categories, amAdmin, accounts, cards = [], reloadTrigger, onChanged }) {
+export default function CommonExpenses({ familyId, members, categories, amAdmin, accounts, cards = [], reloadTrigger, onChanged, onOpenBills }) {
   const [expenses, setExpenses] = useState([]); // the 3 newest
   const [monthRows, setMonthRows] = useState([]); // everything this month, for the totals
   const [showHistory, setShowHistory] = useState(false);
@@ -134,19 +134,13 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
     <section className="card">
       <div className="card-header-row">
         <h2>Common expenses</h2>
-        {amAdmin && !mode && (
-          <div className="form-actions" style={{ flex: "0 0 auto" }}>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setMode("bill")}>Add bill</button>
-          </div>
+        {onOpenBills && (
+          <button type="button" className="link-button" onClick={onOpenBills}>Bills{bills.length ? ` (${bills.length})` : ""}</button>
         )}
       </div>
       <p className="hint">
         Paid from the family pool by default ({formatUsd(bal(accounts.pool.USD))} · {formatMoney(bal(accounts.pool.LBP), "LBP")}). They count toward the family budget, not anyone's personal limit.
       </p>
-
-      {mode === "bill" && (
-        <BillForm familyId={familyId} members={members} categories={categories} onDone={done} onCancel={() => setMode(null)} />
-      )}
 
       <div className="net-line" style={{ margin: "12px 0" }}>
         <span>This month</span>
@@ -158,42 +152,6 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
             <li key={id}><div className="breakdown-row"><span>For {name(id) ?? "a member"}</span><span>{formatUsd(total)}</span></div></li>
           ))}
         </ul>
-      )}
-
-      <h3 className="subsection">Upcoming bills</h3>
-      {bills.length === 0 && <p className="hint">No recurring common bills yet.</p>}
-      <ul className="bill-list">
-        {(showAllBills ? bills : bills.slice(0, BILLS_SHOWN)).map((b) => {
-          const days = daysUntil(b.next_due_date);
-          const status = days < 0 ? "overdue" : days <= 3 ? "soon" : "";
-          return (
-            <li key={b.id} className={`bill-row ${status}`}>
-              <div className="breakdown-row">
-                <span>
-                  {b.name} <span className="txn-meta">({b.recurrence === "one_time" ? "one time" : b.recurrence}{b.tagged_member_id ? ` · for ${name(b.tagged_member_id) ?? "a member"}` : ""})</span>
-                </span>
-                <span>{formatMoney(b.amount, b.currency)}</span>
-              </div>
-              <div className="bill-meta">
-                <span>
-                  {days < 0 ? `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} overdue` : days === 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`} ({formatDate(b.next_due_date)})
-                </span>
-                {amAdmin && (
-                  <div className="bill-actions">
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setPaying(paying?.id === b.id ? null : b)}>Pay</button>
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => removeBill(b)}>Delete</button>
-                  </div>
-                )}
-              </div>
-              {paying?.id === b.id && <PayForm bill={b} cards={cards} accounts={accounts} defaultRate={rate} onDone={done} onCancel={() => setPaying(null)} />}
-            </li>
-          );
-        })}
-      </ul>
-      {bills.length > BILLS_SHOWN && (
-        <button type="button" className="load-more" onClick={() => setShowAllBills((v) => !v)}>
-          {showAllBills ? "Show fewer" : `Show all ${bills.length} bills`}
-        </button>
       )}
 
       <h3 className="subsection">Recent</h3>
@@ -443,176 +401,5 @@ function HistorySheet({ familyId, name, catName, sourceName, amAdmin, onRemove, 
         </div>
       </div>
     </div>
-  );
-}
-
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-function dueChoices() {
-  const today = new Date();
-  const week = new Date(today); week.setDate(week.getDate() + 7);
-  const month = new Date(today.getFullYear(), today.getMonth() + 1, Math.min(today.getDate(), 28));
-  return [
-    { key: "today", label: "Today", value: ymd(today) },
-    { key: "week", label: "In a week", value: ymd(week) },
-    { key: "month", label: "Next month", value: ymd(month) },
-  ];
-}
-
-// A new bill: the hero is the usual amount. Due date has quick choices and a date picker.
-function BillForm({ familyId, members, categories, onDone, onCancel }) {
-  const choices = dueChoices();
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [rate, setRate] = useState("");
-  const [recurrence, setRecurrence] = useState("monthly");
-  const [due, setDue] = useState(choices[1].value);
-  const [pickDate, setPickDate] = useState(false);
-  const [categoryId, setCategoryId] = useState("");
-  const [tag, setTag] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    latestLbpRate(familyId).then((r) => r && setRate(String(Math.round(Number(r)))));
-  }, [familyId]);
-
-  function changeCurrency(c) {
-    if (c === currency) return;
-    setAmount(convertAmountText(amount, currency, c, numOf(rate)));
-    setCurrency(c);
-  }
-
-  const n = numOf(amount);
-  const repeatWord = { monthly: "every month", weekly: "every week", one_time: "once" }[recurrence];
-  const dueLabel = new Date(`${due}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-
-  async function submit(e) {
-    e.preventDefault();
-    if (!name.trim()) return setError("Give the bill a name.");
-    if (!(n > 0)) return setError("Enter the usual amount.");
-    if (!due) return setError("Choose the next due date.");
-    setBusy(true);
-    setError(null);
-    try {
-      await createCommonBill({ familyId, name, amount: n, currency, recurrence, nextDue: due, categoryId, taggedMemberId: tag });
-      onDone();
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  }
-
-  const people = [{ value: "", label: "Whole family" }, ...(members || []).map((m) => ({ value: m.id, label: m.display_name }))];
-
-  return (
-    <EditSheet title="Add a bill" onClose={busy ? undefined : onCancel}>
-      <form onSubmit={submit} className="spend-form">
-        <div className="sf-scroll">
-          <TextInput label="Name" value={name} onChange={setName} placeholder="Internet, electricity, tuition..." required />
-          <AmountHero value={amount} onChange={setAmount} currency={currency} onCurrency={changeCurrency} autoFocus={false}>
-            <span className="sf-muted sf-small">Usual amount. You can change it each time you pay.</span>
-          </AmountHero>
-
-          <div className="sf-block">
-            <span className="sf-label">Repeats</span>
-            <div className="sf-seg" role="group" aria-label="Repeats">
-              {[["monthly", "Every month"], ["weekly", "Every week"], ["one_time", "One time"]].map(([k, l]) => (
-                <button key={k} type="button" className={recurrence === k ? "on" : ""} aria-pressed={recurrence === k} onClick={() => setRecurrence(k)}>{l}</button>
-              ))}
-            </div>
-          </div>
-
-          <div className="sf-block">
-            <span className="sf-label">Next due</span>
-            <div className="sf-chips">
-              {choices.map((c) => (
-                <button key={c.key} type="button" className={`sf-chip ${!pickDate && due === c.value ? "on" : ""}`} aria-pressed={!pickDate && due === c.value} onClick={() => { setPickDate(false); setDue(c.value); }}>{c.label}</button>
-              ))}
-              <button type="button" className={`sf-chip ${pickDate ? "on" : ""}`} aria-pressed={pickDate} onClick={() => setPickDate(true)}>Pick date</button>
-            </div>
-            {pickDate ? <TextInput label="" type="date" value={due} onChange={setDue} required /> : <span className="sf-muted sf-small" style={{ marginTop: 8 }}>{dueLabel}</span>}
-          </div>
-
-          <CategoryChips categories={categories || []} value={categoryId} onChange={setCategoryId} allowNone />
-          <PersonChips label="For" hint="(optional)" value={tag} onChange={setTag} options={people} />
-          {error && <p className="status error" role="alert">{error}</p>}
-        </div>
-        <div className="sf-footer">
-          <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !name.trim() || !(n > 0)}>
-            {busy ? "Saving..." : n > 0 ? `Add bill · ${formatMoney(n, currency)} ${repeatWord}` : "Enter a name and amount"}
-          </button>
-        </div>
-      </form>
-    </EditSheet>
-  );
-}
-
-// Pay a bill. The amount starts as the usual one; change it if this month's bill differs.
-function PayForm({ bill, cards, accounts, defaultRate, onDone, onCancel }) {
-  const cur = bill.currency;
-  const [amount, setAmount] = useState(String(Number(bill.amount)));
-  const [rate, setRate] = useState(defaultRate);
-  const [accountId, setAccountId] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-
-  const sources = [{ id: "", name: "Family pool", balance: bal(accounts.pool?.[cur]) }];
-  for (const k of cards || []) {
-    const a = accounts.cards[k.id];
-    if (a && !k.archived && a.currency === cur) sources.push({ id: a.id, name: k.name, balance: bal(a) });
-  }
-  const chosen = sources.find((o) => o.id === accountId) || sources[0];
-  const n = numOf(amount);
-  const rateNum = numOf(rate);
-  const over = n > chosen.balance + 1e-9;
-  const needsRate = cur === "LBP";
-  const valid = n > 0 && !over && (!needsRate || rateNum > 0);
-
-  async function submit(e) {
-    e.preventDefault();
-    if (!valid) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await payCommonBill({ billId: bill.id, amount: n, accountId: chosen.id, lbpPerUsd: needsRate ? rateNum : null });
-      onDone();
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  }
-
-  const label = over ? `Not enough in ${chosen.name}` : valid ? `Pay ${formatMoney(n, cur)} from ${chosen.id ? chosen.name : "pool"}` : needsRate && n > 0 ? "Enter the exchange rate" : "Enter an amount";
-
-  return (
-    <EditSheet title={`Pay ${bill.name}`} onClose={busy ? undefined : onCancel}>
-      <form onSubmit={submit} className="spend-form">
-        <div className="sf-scroll">
-          <AmountHero value={amount} onChange={setAmount} currency={cur} autoFocus={false}>
-            <span className="sf-muted sf-small">Usual amount: {formatMoney(Number(bill.amount), cur)}</span>
-            {needsRate && n > 0 && rateNum > 0 && <span className="sf-muted sf-small">≈ {formatUsd(n / rateNum)} at {Math.round(rateNum).toLocaleString("en-US")}</span>}
-          </AmountHero>
-          {needsRate && (
-            <MoneyInput label="Exchange rate (LBP per $1)" value={rate} onChange={setRate} placeholder="89,500" required
-              help={rateNum ? formatRate(rateNum) : "How many LBP equal $1 today"} />
-          )}
-          <div className="sf-block">
-            <span className="sf-label">Pay from</span>
-            <div className="sf-boxes">
-              {sources.map((o) => (
-                <button key={o.id || "pool"} type="button" className={`sf-box ${chosen.id === o.id ? "on" : ""}`} aria-pressed={chosen.id === o.id} onClick={() => setAccountId(o.id)}>
-                  <strong>{o.name}</strong><span>{formatMoney(o.balance, cur)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          {error && <p className="status error" role="alert">{error}</p>}
-        </div>
-        <div className="sf-footer">
-          <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !valid}>{busy ? "Paying..." : label}</button>
-        </div>
-      </form>
-    </EditSheet>
   );
 }
