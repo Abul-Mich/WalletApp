@@ -182,12 +182,19 @@ export const INCOME_TYPES = [
   { key: "reimbursement", label: "Reimbursement", note: "Not income: it lowers what you spent in the category you pick." },
   { key: "other", label: "Other", note: "Counts as money in. It does not change your spending limit." },
 ];
-export const createIncome = ({ accountId, amount, kind, lbpPerUsd = null, categoryId = null, note = null, createdAt = null }) =>
+export const createIncome = ({ accountId, amount, kind, lbpPerUsd = null, categoryId = null, note = null, createdAt = null, beneficiaryId = null }) =>
   call("create_income", {
     p_account_id: accountId, p_amount: amount, p_kind: kind, p_lbp_per_usd: lbpPerUsd,
     p_category_id: categoryId, p_note: note || null, p_created_at: createdAt,
+    ...(beneficiaryId ? { p_beneficiary_member_id: beneficiaryId } : {}),
   });
 export const deleteIncome = (id) => call("delete_income", { p_id: id });
+export const updateIncome = ({ id, amount, kind, lbpPerUsd = null, categoryId = null, note = null, createdAt = null, beneficiaryId = null }) =>
+  call("update_income", {
+    p_id: id, p_amount: amount, p_kind: kind, p_lbp_per_usd: lbpPerUsd,
+    p_category_id: categoryId, p_note: note || null, p_created_at: createdAt,
+    p_beneficiary_member_id: beneficiaryId || null,
+  });
 
 // Outside-money records for the records lists (never the old pool deposits). Rows come back with kind "income"
 // and the deposit's own kind in deposit_kind. memberId = the wallet owner it was added for.
@@ -335,6 +342,11 @@ export const createCommonBill = (a) =>
     p_tagged_member_id: a.taggedMemberId || null,
   });
 export const deleteCommonBill = (id) => call("delete_common_bill", { p_id: id });
+export const updateCommonBill = (a) =>
+  call("update_common_bill", {
+    p_id: a.id, p_name: a.name, p_amount: a.amount, p_currency: a.currency, p_recurrence: a.recurrence,
+    p_next_due: a.nextDue, p_category_id: a.categoryId || null, p_tagged_member_id: a.taggedMemberId || null,
+  });
 export const payCommonBill = ({ billId, amount, lbpPerUsd, createdAt, accountId }) =>
   call("pay_common_bill", {
     p_bill_id: billId,

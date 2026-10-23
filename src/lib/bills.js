@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { periodStartIso } from "./beirutTime";
 import {
-  latestLbpRate, createExpense, createCommonBill, deleteCommonBill, payCommonBill,
+  latestLbpRate, createExpense, createCommonBill, updateCommonBill, deleteCommonBill, payCommonBill,
 } from "./wallets";
 
 // One list for every bill: family bills (common_bills, admins add and pay them from the pool or a
@@ -129,6 +129,24 @@ export async function createBill({ scope, familyId, memberId, name, amount, curr
     family_id: familyId, created_by_member_id: memberId, name: name.trim(), amount, currency,
     exchange_rate_to_base: toBase, category_id: categoryId || null, recurrence, next_due_date: due,
   });
+  if (error) throw new Error(error.message);
+}
+
+// Edit a bill (family bills: admins through update_common_bill; personal bills: the owner, direct update).
+export async function updateBill(item, { familyId, name, amount, currency, recurrence, due, categoryId, taggedMemberId }) {
+  if (item.scope === "family") {
+    return updateCommonBill({ id: item.id, name, amount, currency, recurrence, nextDue: due, categoryId, taggedMemberId });
+  }
+  let toBase = 1;
+  if (currency === "LBP") {
+    const r = await latestLbpRate(familyId);
+    if (!r) throw new Error("Set the LBP exchange rate first.");
+    toBase = 1 / Number(r);
+  }
+  const { error } = await supabase.from("planned_payments").update({
+    name: name.trim(), amount, currency, exchange_rate_to_base: toBase, category_id: categoryId || null,
+    recurrence, next_due_date: due,
+  }).eq("id", item.id);
   if (error) throw new Error(error.message);
 }
 

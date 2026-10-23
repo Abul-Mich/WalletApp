@@ -2158,3 +2158,7 @@ button.link-btn:hover {
 .push-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
 .push-ok { color: var(--success); }
 .push-err { color: var(--danger); }
+.pk-move-e { font-size: 15px; }
+.pk-move-e:hover, .pk-move-e:active { color: var(--text); }
+.sheet:has(.inc-edit) { max-height: 90vh; max-height: 90dvh; }
+.inc-edit .sf-two { grid-template-columns: 1fr; gap: 12px; }

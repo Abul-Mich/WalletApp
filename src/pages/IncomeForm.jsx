@@ -4,6 +4,7 @@ import { formatMoney, formatRate, parseNumber, convertAmountText } from "../lib/
 import { MoneyInput, TextInput } from "../components/Field";
 import AmountHero from "../components/AmountHero";
 import { makeColorFor } from "../lib/categoryColors";
+import { PersonChips } from "../components/RecordFields";
 
 const num = (v) => {
   const n = parseNumber(v);
@@ -20,7 +21,7 @@ function nowLocal() {
 // pockets; admins can also add to a card or the family pool. A reimbursement is not income: it is
 // tied to a category and lowers that category's spending.
 // presetDest: "main" | "pocket:<id>" | "card:<id>" | "pool" (optional)
-export default function IncomeForm({ familyId, memberId, categories = [], accounts, cards = [], amAdmin, presetDest, onDone }) {
+export default function IncomeForm({ familyId, memberId, categories = [], accounts, cards = [], members = [], amAdmin, presetDest, onDone }) {
   const [pockets, setPockets] = useState([]);
   const [kind, setKind] = useState("salary");
   const [dest, setDest] = useState(presetDest || "main");
@@ -29,6 +30,7 @@ export default function IncomeForm({ familyId, memberId, categories = [], accoun
   const [categoryId, setCategoryId] = useState("");
   const [rate, setRate] = useState("");
   const [rateIsDefault, setRateIsDefault] = useState(false);
+  const [forWho, setForWho] = useState(""); // pool / card only: who it counts for ("" = the whole family)
   const [note, setNote] = useState("");
   const [when, setWhen] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -70,6 +72,7 @@ export default function IncomeForm({ familyId, memberId, categories = [], accoun
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dest, pockets.length]);
 
+  const sharedDest = dest === "pool" || dest.startsWith("card:"); // money that is not in anyone's own wallet
   const rateNum = num(rate);
   const amt = num(amount);
   const isReimb = kind === "reimbursement";
@@ -94,7 +97,7 @@ export default function IncomeForm({ familyId, memberId, categories = [], accoun
     try {
       await createIncome({
         accountId: acct.id, amount: amt, kind, lbpPerUsd: cur === "LBP" ? rateNum : null,
-        categoryId: isReimb ? categoryId : null, note: note.trim().slice(0, 200) || null, createdAt: when ? new Date(when).toISOString() : null,
+        categoryId: isReimb ? categoryId : null, beneficiaryId: sharedDest ? forWho : null, note: note.trim().slice(0, 200) || null, createdAt: when ? new Date(when).toISOString() : null,
       });
       setAmount(""); setNote(""); setWhen("");
       onDone?.();
@@ -154,6 +157,13 @@ export default function IncomeForm({ familyId, memberId, categories = [], accoun
             })}
           </div>
         </div>
+
+        {sharedDest && (
+          <PersonChips
+            label="Counts for" hint="(optional)" value={forWho} onChange={setForWho}
+            options={[{ value: "", label: "Whole family" }, ...members.filter((m) => !m.removed_at).map((m) => ({ value: m.id, label: m.display_name }))]}
+          />
+        )}
 
         {cur === "LBP" && (
           <MoneyInput

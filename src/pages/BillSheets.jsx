@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { bal, latestLbpRate } from "../lib/wallets";
-import { createBill, deleteBill, payBill, todayKey, addDaysKey, addMonthKey, shortDay, REPEAT_TEXT } from "../lib/bills";
+import { createBill, updateBill, deleteBill, payBill, todayKey, addDaysKey, addMonthKey, shortDay, REPEAT_TEXT } from "../lib/bills";
 import { formatMoney, formatRate, parseNumber, convertAmountText } from "../lib/format";
 import { MoneyInput, TextInput } from "../components/Field";
 import AmountHero from "../components/AmountHero";
@@ -14,7 +14,7 @@ const num = (v) => {
 
 // ---------------------------------------------------------------- pay --
 
-function PayBillSheet({ bill, accounts, cards, memberId, amAdmin, familyId, defaultRate, onClose, onDone }) {
+function PayBillSheet({ bill, accounts, cards, memberId, amAdmin, familyId, defaultRate, onClose, onDone, onEdit }) {
   const cur = bill.currency;
   const canPay = bill.scope === "mine" || amAdmin;
   const [amount, setAmount] = useState(String(bill.amount));
@@ -103,7 +103,10 @@ function PayBillSheet({ bill, accounts, cards, memberId, amAdmin, familyId, defa
           )}
           {error && <p className="status error" role="alert">{error}</p>}
           {(bill.scope === "mine" || amAdmin) && (
-            <button type="button" className="pk-edit-link" onClick={remove}>Delete this bill</button>
+            <>
+              <button type="button" className="pk-edit-link" onClick={onEdit}>Edit this bill</button>
+              <button type="button" className="pk-edit-link" onClick={remove}>Delete this bill</button>
+            </>
           )}
         </div>
         {canPay && (
@@ -121,23 +124,24 @@ function PayBillSheet({ bill, accounts, cards, memberId, amAdmin, familyId, defa
 
 // ---------------------------------------------------------------- add --
 
-function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset, onClose, onDone }) {
+function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset, bill, onClose, onDone }) {
   const today = todayKey();
   const choices = [
     { key: "today", label: "Today", value: today },
     { key: "week", label: "In a week", value: addDaysKey(today, 7) },
     { key: "month", label: "Next month", value: addMonthKey(today) },
   ];
-  const [scope, setScope] = useState(preset === "family" && amAdmin ? "family" : "mine");
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
+  const editing = !!bill; // edit mode: the bill's own wallet scope (mine / family) cannot change
+  const [scope, setScope] = useState(editing ? bill.scope : preset === "family" && amAdmin ? "family" : "mine");
+  const [name, setName] = useState(editing ? bill.name : "");
+  const [amount, setAmount] = useState(editing ? String(Number(bill.amount)) : "");
+  const [currency, setCurrency] = useState(editing ? bill.currency : "USD");
   const [rate, setRate] = useState("");
-  const [recurrence, setRecurrence] = useState("monthly");
-  const [due, setDue] = useState(choices[1].value);
-  const [pickDate, setPickDate] = useState(false);
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
-  const [tag, setTag] = useState("");
+  const [recurrence, setRecurrence] = useState(editing ? bill.recurrence : "monthly");
+  const [due, setDue] = useState(editing ? bill.due : choices[1].value);
+  const [pickDate, setPickDate] = useState(editing);
+  const [categoryId, setCategoryId] = useState(editing ? bill.categoryId || "" : categories[0]?.id ?? "");
+  const [tag, setTag] = useState(editing ? bill.taggedMemberId || "" : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -162,7 +166,9 @@ function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset
     if (!due) return setError("Choose the next due date.");
     setBusy(true);
     try {
-      await createBill({ scope, familyId, memberId, name, amount: n, currency, recurrence, due, categoryId: family ? categoryId : categoryId || null, taggedMemberId: family ? tag : null });
+      const fields = { name, amount: n, currency, recurrence, due, categoryId: family ? categoryId : categoryId || null, taggedMemberId: family ? tag : null };
+      if (editing) await updateBill(bill, { familyId, ...fields });
+      else await createBill({ scope, familyId, memberId, ...fields });
       onDone();
     } catch (err) {
       setError(err.message);
@@ -173,7 +179,7 @@ function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset
   const people = [{ value: "", label: "Whole family" }, ...(members || []).filter((m) => !m.removed_at).map((m) => ({ value: m.id, label: m.display_name }))];
 
   return (
-    <EditSheet title="Add a bill" onClose={busy ? undefined : onClose}>
+    <EditSheet title={editing ? "Edit bill" : "Add a bill"} onClose={busy ? undefined : onClose}>
       <form onSubmit={submit} className="spend-form">
         <div className="sf-scroll">
           <TextInput label="Name" value={name} onChange={setName} placeholder="Rent, internet, gym..." required />
@@ -181,7 +187,7 @@ function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset
             <span className="sf-muted sf-small">Usual amount. You can change it each time you pay.</span>
           </AmountHero>
 
-          {amAdmin && (
+          {amAdmin && !editing && (
             <div className="sf-block">
               <span className="sf-label">Whose bill</span>
               <div className="sf-seg" role="group" aria-label="Whose bill">
@@ -222,7 +228,7 @@ function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset
         </div>
         <div className="sf-footer">
           <button type="submit" className="btn btn-primary btn-block sf-submit" disabled={busy || !name.trim() || !(n > 0)}>
-            {busy ? "Saving..." : n > 0 ? `Add bill · ${formatMoney(n, currency)} ${REPEAT_TEXT[recurrence]}` : "Enter a name and amount"}
+            {busy ? "Saving..." : editing ? "Save changes" : n > 0 ? `Add bill · ${formatMoney(n, currency)} ${REPEAT_TEXT[recurrence]}` : "Enter a name and amount"}
           </button>
         </div>
       </form>
@@ -232,7 +238,10 @@ function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset
 
 // sheet = { type: "pay", bill } | { type: "add", preset }
 export default function BillSheets({ sheet, onClose, onDone, ...ctx }) {
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setEditing(false); }, [sheet]);
   if (!sheet) return null;
-  if (sheet.type === "pay") return <PayBillSheet bill={sheet.bill} {...ctx} onClose={onClose} onDone={onDone} />;
+  if (sheet.type === "pay" && editing) return <AddBillSheet bill={sheet.bill} {...ctx} onClose={() => setEditing(false)} onDone={onDone} />;
+  if (sheet.type === "pay") return <PayBillSheet bill={sheet.bill} {...ctx} onClose={onClose} onDone={onDone} onEdit={() => setEditing(true)} />;
   return <AddBillSheet preset={sheet.preset} {...ctx} onClose={onClose} onDone={onDone} />;
 }
