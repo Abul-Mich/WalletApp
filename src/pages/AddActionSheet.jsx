@@ -1,14 +1,16 @@
 import { useState } from "react";
 import TransactionForm from "./TransactionForm";
 import ExchangeForm from "./ExchangeForm";
+import IncomeForm from "./IncomeForm";
 
 const TABS = [
   { key: "expense", label: "Spend" },
   { key: "exchange", label: "Exchange" },
+  { key: "income", label: "Add money" },
 ];
 
-export default function AddActionSheet({ familyId, memberId, categories, accounts, members, cards, amAdmin, limits, onClose, onDone }) {
-  const [tab, setTab] = useState("expense");
+export default function AddActionSheet({ familyId, memberId, categories, accounts, members, cards, amAdmin, limits, initialTab = "expense", presetDest, onClose, onDone }) {
+  const [tab, setTab] = useState(initialTab);
 
   function handleDone() {
     onDone?.();
@@ -36,6 +38,12 @@ export default function AddActionSheet({ familyId, memberId, categories, account
             <TransactionForm
               familyId={familyId} memberId={memberId} categories={categories} accounts={accounts}
               members={(members || []).filter((m) => !m.removed_at)} cards={cards || []} amAdmin={amAdmin} limits={limits} onDone={handleDone}
+            />
+          )}
+          {tab === "income" && (
+            <IncomeForm
+              familyId={familyId} memberId={memberId} categories={categories} accounts={accounts}
+              cards={cards || []} amAdmin={amAdmin} presetDest={presetDest} onDone={handleDone}
             />
           )}
           {tab === "exchange" && <ExchangeForm familyId={familyId} memberId={memberId} accounts={accounts} amAdmin={amAdmin} onDone={handleDone} />}

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { bal, loadPockets, createPocket, renamePocket, setPocketArchived, createTransfer, friendlyError } from "../lib/wallets";
+import { bal, deleteIncome, INCOME_TYPES, loadPockets, createPocket, renamePocket, setPocketArchived, createTransfer, friendlyError } from "../lib/wallets";
 import { formatMoney, formatUsd, formatLbp, formatShortDate, parseNumber } from "../lib/format";
 import MoveMoneyView from "../components/MoveMoneyView";
 import MemberBalanceTransfer from "./MemberBalanceTransfer";
 import AddToMainBalanceForm from "./AddToMainBalanceForm";
+import { useConfirm } from "../components/ConfirmSheet";
 
 // "Your money": the main wallet (cash in hand) and the member's pockets as one swipeable,
 // looping carousel. Tap the front card to open it. Pockets are named buckets carved out of the
@@ -34,6 +35,7 @@ const ICONS = {
   plus: <Icon d="M12 5v14M5 12h14" />,
   clock: <Icon d="M12 8v4l3 2" extra={<circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.8" />} />,
   swap: <Icon d="M7 7h11m0 0l-3-3m3 3l-3 3M17 17H6m0 0l3-3m-3 3l3 3" />,
+  money: <Icon d="M4 8h16v9H4zM4 12h16M8 5.5l4-2.5 4 2.5" />,
 };
 
 // ---------- sheets ----------
@@ -267,44 +269,58 @@ function PoolSheet({ memberId, accounts, onClose, onDone }) {
 }
 
 // The sheet that opens from the front card: balance, actions, recent movements.
-function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose, onAction, reloadKey }) {
+function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose, onAction, onChangedInside, reloadKey }) {
   const [moves, setMoves] = useState(null);
   const [all, setAll] = useState(false);
   const isMain = item.kind === "main";
+  const { ask, dialog } = useConfirm();
 
   useEffect(() => {
     let live = true;
     const ids = isMain ? [item.accts.USD?.id, item.accts.LBP?.id].filter(Boolean) : [acct?.id].filter(Boolean);
     if (!ids.length) { setMoves([]); return; }
-    supabase
-      .from("transfers").select("*")
-      .or(ids.map((id) => `from_account_id.eq.${id},to_account_id.eq.${id}`).join(","))
-      .order("created_at", { ascending: false }).limit(30)
-      .then(({ data }) => {
-        if (!live) return;
-        const mine = new Set(ids);
-        const label = (accId) => {
-          const a = rawAccounts.find((x) => x.id === accId);
-          if (!a) return "another wallet";
-          if (a.owner_kind === "pool") return "Family pool";
-          if (a.owner_kind === "member") return "main wallet";
-          if (a.owner_kind === "pocket") return pockets.find((p) => p.id === a.pocket_id)?.name || "a pocket";
-          return cards.find((c) => c.id === a.card_id)?.name || "a card";
-        };
-        setMoves((data || []).map((t) => {
-          const incoming = mine.has(t.to_account_id);
-          const other = label(incoming ? t.from_account_id : t.to_account_id);
-          const cur = rawAccounts.find((x) => x.id === t.to_account_id)?.currency;
-          return { id: t.id, title: incoming ? `Moved in from ${other}` : `Moved to ${other}`, date: formatShortDate(t.created_at), amount: formatMoney(t.amount, cur) };
-        }));
-      });
+    const mine = new Set(ids);
+    const label = (accId) => {
+      const a = rawAccounts.find((x) => x.id === accId);
+      if (!a) return "another wallet";
+      if (a.owner_kind === "pool") return "Family pool";
+      if (a.owner_kind === "member") return "main wallet";
+      if (a.owner_kind === "pocket") return pockets.find((p) => p.id === a.pocket_id)?.name || "a pocket";
+      return cards.find((c) => c.id === a.card_id)?.name || "a card";
+    };
+    Promise.all([
+      supabase.from("transfers").select("*")
+        .or(ids.map((id) => `from_account_id.eq.${id},to_account_id.eq.${id}`).join(","))
+        .order("created_at", { ascending: false }).limit(30),
+      supabase.from("deposits").select("*")
+        .in("account_id", ids).order("created_at", { ascending: false }).limit(30),
+    ]).then(([tr, dp]) => {
+      if (!live) return;
+      const rows = [];
+      for (const t of tr.data || []) {
+        const incoming = mine.has(t.to_account_id);
+        const other = label(incoming ? t.from_account_id : t.to_account_id);
+        const cur = rawAccounts.find((x) => x.id === t.to_account_id)?.currency;
+        rows.push({ id: `t${t.id}`, at: t.created_at, title: incoming ? `Moved in from ${other}` : `Moved to ${other}`, amount: formatMoney(t.amount, cur) });
+      }
+      for (const d of dp.data || []) {
+        const cur = d.currency || rawAccounts.find((x) => x.id === d.account_id)?.currency;
+        const name = INCOME_TYPES.find((x) => x.key === d.kind)?.label;
+        rows.push({
+          id: `d${d.id}`, at: d.created_at, income: true, depositId: d.kind === "deposit" ? null : d.id,
+          title: name ? `${name}, from outside` : "From outside", note: d.note, amount: `+${formatMoney(d.amount, cur)}`,
+        });
+      }
+      rows.sort((a, b) => new Date(b.at) - new Date(a.at));
+      setMoves(rows.slice(0, 30).map((r) => ({ ...r, date: formatShortDate(r.at) })));
+    });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.key, acct?.balance_cache, reloadKey]);
 
   const actions = isMain
-    ? [["plus", "Add expense", "expense"], ["out", "To a pocket", "toPocket"], ["swap", "Pool", "pool"], ["clock", "History", "history"]]
-    : [["in", "From main", "fromMain"], ["out", "To main", "toMain"], ["clock", "History", "history"]];
+    ? [["plus", "Add expense", "expense"], ["money", "Add money", "income"], ["out", "To a pocket", "toPocket"], ["swap", "Pool", "pool"], ["clock", "History", "history"]]
+    : [["in", "From main", "fromMain"], ["out", "To main", "toMain"], ["money", "Add money", "income"], ["clock", "History", "history"]];
   const shown = (moves || []).slice(0, all ? 30 : 3);
 
   return (
@@ -312,7 +328,7 @@ function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose,
       <div className="pk-open-bal">{item.bal}{item.sub && <span>{item.sub}</span>}</div>
       <div className="pk-actions">
         {actions.map(([icon, label, key]) => (
-          <button key={key} type="button" className="pk-action" aria-label={label} onClick={() => (key === "history" && !isMain ? setAll(true) : onAction(key))}>
+          <button key={key} type="button" className={`pk-action ${key === "income" ? "pk-action-in" : ""}`} aria-label={label} onClick={() => (key === "history" && !isMain ? setAll(true) : onAction(key))}>
             <span className="pk-action-ico">{ICONS[icon]}</span>
             <span>{label}</span>
           </button>
@@ -324,20 +340,29 @@ function OpenSheet({ item, pockets, rawAccounts, cards, accounts, acct, onClose,
         {moves && moves.length === 0 && <p className="hint">Nothing yet. Money you move here shows up in this list.</p>}
         {shown.map((m) => (
           <div key={m.id} className="pk-move">
-            <span><span className="pk-move-t">{m.title}</span><span className="pk-move-d">{m.date}</span></span>
-            <span className="pk-move-a">{m.amount}</span>
+            <span><span className="pk-move-t">{m.title}</span><span className="pk-move-d">{m.date}{m.note ? ` · ${m.note}` : ""}</span></span>
+            <span className={`pk-move-a ${m.income ? "pk-in" : ""}`}>
+              {m.amount}
+              {m.depositId && (
+                <button type="button" className="pk-move-x" aria-label="Delete this entry" onClick={() => ask({
+                  title: "Delete this entry?", detail: `${m.title} · ${m.amount}`, effect: "The money is taken out of this wallet again.", confirmLabel: "Delete",
+                  onConfirm: async () => { await deleteIncome(m.depositId); onChangedInside(); },
+                })}>×</button>
+              )}
+            </span>
           </div>
         ))}
         {!all && moves && moves.length > 3 && <button type="button" className="pk-more" onClick={() => setAll(true)}>Show more</button>}
       </div>
       {!isMain && <button type="button" className="pk-edit-link" onClick={() => onAction("edit")}>Rename or archive this pocket</button>}
+      {dialog}
     </Sheet>
   );
 }
 
 // ---------- the carousel ----------
 
-export default function PocketsCard({ familyId, memberId, accounts, rawAccounts = [], cards = [], wallets, rate, onChanged, onAddExpense, onHistory }) {
+export default function PocketsCard({ familyId, memberId, accounts, rawAccounts = [], cards = [], wallets, rate, onChanged, onAddExpense, onAddMoney, onHistory }) {
   const [pockets, setPockets] = useState(null);
   const [sel, setSel] = useState(0);
   const [sheet, setSheet] = useState(null); // {type, ...}
@@ -409,6 +434,7 @@ export default function PocketsCard({ familyId, memberId, accounts, rawAccounts 
   function onAction(key) {
     const it = openItem;
     if (key === "expense") { setSheet(null); onAddExpense?.(); }
+    else if (key === "income") { setSheet(null); onAddMoney?.(it.kind === "main" ? "main" : `pocket:${it.key}`); }
     else if (key === "history") { setSheet(null); onHistory?.(); }
     else if (key === "pool") setSheet({ type: "pool" });
     else if (key === "toPocket") setSheet({ type: "move", dir: "toPocket", pocketId: list[0]?.id || null });
@@ -487,7 +513,7 @@ export default function PocketsCard({ familyId, memberId, accounts, rawAccounts 
         <OpenSheet
           item={openItem} pockets={list} rawAccounts={rawAccounts} cards={cards} accounts={accounts}
           acct={openItem.kind === "pocket" ? acctOf(openItem.pocket) : null}
-          onClose={() => setSheet(null)} onAction={onAction} reloadKey={reloadKey}
+          onClose={() => setSheet(null)} onAction={onAction} onChangedInside={() => refresh(false)} reloadKey={reloadKey}
         />
       )}
       {sheet?.type === "new" && (

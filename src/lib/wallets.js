@@ -171,6 +171,22 @@ export const createDeposit = ({ accountId, amount, lbpPerUsd, createdAt }) =>
   });
 export const deleteDeposit = (id) => call("delete_deposit", { p_id: id });
 
+// Money from outside the family (migration 0014): salary, bonus, gift, other, or a reimbursement
+// (linked to a category, it lowers that category's spending instead of counting as income).
+export const INCOME_TYPES = [
+  { key: "salary", label: "Salary", note: "Counts as money in. It does not change your spending limit." },
+  { key: "bonus", label: "Bonus", note: "Counts as money in. It does not change your spending limit." },
+  { key: "gift", label: "Gift", note: "Counts as money in. It does not change your spending limit." },
+  { key: "reimbursement", label: "Reimbursement", note: "Not income: it lowers what you spent in the category you pick." },
+  { key: "other", label: "Other", note: "Counts as money in. It does not change your spending limit." },
+];
+export const createIncome = ({ accountId, amount, kind, lbpPerUsd = null, categoryId = null, note = null, createdAt = null }) =>
+  call("create_income", {
+    p_account_id: accountId, p_amount: amount, p_kind: kind, p_lbp_per_usd: lbpPerUsd,
+    p_category_id: categoryId, p_note: note || null, p_created_at: createdAt,
+  });
+export const deleteIncome = (id) => call("delete_income", { p_id: id });
+
 // ---------- transfers / exchange ----------
 export const createTransfer = ({ from, to, amount, note, createdAt, taggedMemberId }) =>
   call("create_transfer", {

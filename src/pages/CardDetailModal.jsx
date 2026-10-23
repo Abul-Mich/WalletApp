@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useConfirm } from "../components/ConfirmSheet";
 import { supabase } from "../supabaseClient";
 import CardSpendEditForm from "./CardSpendEditForm";
-import { deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
+import { deleteIncome, INCOME_TYPES, deleteTransfer, deleteCardSpend, deleteCommonExpense, fmtMoney, fmtWhen } from "../lib/wallets";
 import CardTopUpForm from "./CardTopUpForm";
 import CardWithdrawForm from "./CardWithdrawForm";
 import CardToWalletForm from "./CardToWalletForm";
+import IncomeForm from "./IncomeForm";
 
 const PAGE_SIZE = 20;
 
@@ -27,7 +28,7 @@ export default function CardDetailModal({
 
   async function loadHistory(nextLimit) {
     setLoading(true);
-    const [{ data: transfers }, { data: spends }, { data: commons }] = await Promise.all([
+    const [{ data: transfers }, { data: spends }, { data: commons }, { data: incomes }] = await Promise.all([
       supabase.from("transfers").select("*")
         .or(`to_account_id.eq.${cardAccount.id},from_account_id.eq.${cardAccount.id}`)
         .order("created_at", { ascending: false }).limit(nextLimit),
@@ -35,8 +36,11 @@ export default function CardDetailModal({
         .order("created_at", { ascending: false }).limit(nextLimit),
       supabase.from("common_expenses").select("*").eq("account_id", cardAccount.id)
         .order("created_at", { ascending: false }).limit(nextLimit),
+      supabase.from("deposits").select("*").eq("account_id", cardAccount.id)
+        .order("created_at", { ascending: false }).limit(nextLimit),
     ]);
     const combined = [
+      ...(incomes || []).map((r) => ({ ...r, deposit_kind: r.kind, kind: "income", member_id: r.added_by_member_id, sign: 1 })),
       ...(transfers || []).map((r) => ({
         ...r, kind: "topup", member_id: r.created_by,
         sign: r.to_account_id === cardAccount.id ? 1 : -1,
@@ -45,7 +49,7 @@ export default function CardDetailModal({
       ...(commons || []).map((r) => ({ ...r, kind: "common", member_id: r.created_by, sign: -1 })),
     ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     setHistory(combined.slice(0, nextLimit));
-    setHasMore((transfers?.length ?? 0) === nextLimit || (spends?.length ?? 0) === nextLimit || (commons?.length ?? 0) === nextLimit);
+    setHasMore((transfers?.length ?? 0) === nextLimit || (spends?.length ?? 0) === nextLimit || (commons?.length ?? 0) === nextLimit || (incomes?.length ?? 0) === nextLimit);
     setLoading(false);
   }
 
@@ -90,23 +94,24 @@ export default function CardDetailModal({
 
   // Spends can be edited (their person, category, amount, date, note); top-ups and family costs are deleted and re-entered.
   function canEdit(r) {
-    return !card.archived && r.kind !== "topup" && r.kind !== "common" && (r.member_id === memberId || amAdmin);
+    return !card.archived && r.kind !== "topup" && r.kind !== "common" && r.kind !== "income" && (r.member_id === memberId || amAdmin);
   }
 
   function canDelete(r) {
-    if (r.kind === "topup" || r.kind === "common") return amAdmin;
+    if (r.kind === "topup" || r.kind === "common" || r.kind === "income") return amAdmin;
     return r.member_id === memberId || amSuperadmin;
   }
 
   function removeEntry(r) {
-    const what = r.kind === "topup" ? "top-up" : r.kind === "common" ? "family cost" : "spending";
+    const what = r.kind === "income" ? "entry" : r.kind === "topup" ? "top-up" : r.kind === "common" ? "family cost" : "spending";
     ask({
       title: `Delete this ${what}?`,
       detail: `${fmtMoney(r.amount, cur)} on ${card.name}`,
       effect: "The card balance is recalculated, and the money goes back to where it came from. This cannot be undone.",
       confirmLabel: `Delete ${what}`, cancelLabel: "Keep it", icon: "trash",
       onConfirm: async () => {
-        if (r.kind === "topup") await deleteTransfer(r.id);
+        if (r.kind === "income") await deleteIncome(r.id);
+        else if (r.kind === "topup") await deleteTransfer(r.id);
         else if (r.kind === "common") await deleteCommonExpense(r.id);
         else await deleteCardSpend(r.id);
         handleDone();
@@ -193,6 +198,7 @@ export default function CardDetailModal({
               <button type="button" className={`sheet-tab ${tab === "withdraw" ? "active" : ""}`} onClick={() => setTab("withdraw")}>Spend</button>
 
               <button type="button" className={`sheet-tab ${tab === "towallet" ? "active" : ""}`} onClick={() => setTab("towallet")}>To my wallet</button>
+              {amAdmin && <button type="button" className={`sheet-tab ${tab === "income" ? "active" : ""}`} onClick={() => setTab("income")}>Add money</button>}
             </>
           )}
           <button type="button" className={`sheet-tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>History</button>
@@ -209,6 +215,14 @@ export default function CardDetailModal({
 
           {!card.archived && tab === "towallet" && (
             <CardToWalletForm cardAccount={cardAccount} memberAccounts={memberAccounts} memberId={memberId} onDone={handleDone} />
+          )}
+
+          {!card.archived && amAdmin && tab === "income" && (
+            <IncomeForm
+              familyId={familyId} memberId={memberId} categories={categories || []} cards={[card]} amAdmin={amAdmin}
+              accounts={{ pool: poolAccounts, members: memberAccounts, cards: { [card.id]: cardAccount }, pockets: {} }}
+              presetDest={`card:${card.id}`} onDone={handleDone}
+            />
           )}
 
           {tab === "history" && (
@@ -229,7 +243,7 @@ export default function CardDetailModal({
                         {r.sign > 0 ? "+" : "-"}{fmtMoney(r.kind === "topup" ? r.amount : r.amount, cur)}
                       </span>
                       <span className="txn-meta">
-                        {r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : `Spent${categories?.find((c) => c.id === r.category_id) ? ` on ${categories.find((c) => c.id === r.category_id).name}` : ""}`}{sourceLabel(r)} ·{" "}
+                        {r.kind === "income" ? `${INCOME_TYPES.find((x) => x.key === r.deposit_kind)?.label || "Money added"}, from outside` : r.kind === "topup" ? (r.sign > 0 ? "Top up" : "Returned") : r.kind === "common" ? `Family cost: ${r.title}` : `Spent${categories?.find((c) => c.id === r.category_id) ? ` on ${categories.find((c) => c.id === r.category_id).name}` : ""}`}{sourceLabel(r)} ·{" "}
                         {members?.find((m) => m.id === r.member_id)?.display_name ?? "Unknown member"}
                         {r.tagged_member_id && r.tagged_member_id !== r.member_id &&
                           ` · for ${members?.find((m) => m.id === r.tagged_member_id)?.display_name ?? "a member"}`} · {fmtWhen(r.created_at)}
