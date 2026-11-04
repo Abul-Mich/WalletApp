@@ -235,7 +235,7 @@ export default function Statistics({ familyId }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [familyId, session, selectedMember, range]);
+  }, [familyId, session?.user?.id, selectedMember, range]);
 
   // Display name of a rolled-up group: the family's category, or a built-in label for records without one.
   const groupName = (g) =>

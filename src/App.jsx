@@ -9,8 +9,12 @@ import PwaStatus from './components/PwaStatus'
 
 function Screens() {
   const { session, loading, passwordRecovery } = useAuth()
-  const [checkingMembership, setCheckingMembership] = useState(true)
-  const [familyId, setFamilyId] = useState(null)
+  // Remember which family this person belongs to so reopening the app skips the "Loading..." screen.
+  const [cachedFam] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('fw:famid') || 'null') } catch { return null }
+  })
+  const [checkingMembership, setCheckingMembership] = useState(!cachedFam)
+  const [familyId, setFamilyId] = useState(cachedFam?.fid ?? null)
 
   useEffect(() => {
     if (!session) {
@@ -19,8 +23,10 @@ function Screens() {
     }
 
     let cancelled = false
+    const hasCache = cachedFam && cachedFam.uid === session.user.id
     async function checkMembership() {
-      setCheckingMembership(true)
+      if (hasCache) setFamilyId(cachedFam.fid)
+      else setCheckingMembership(true)
       try {
         const { data, error } = await supabase
           .from('members')
@@ -31,11 +37,15 @@ function Screens() {
           .maybeSingle()
         if (error) throw error
         if (!cancelled) setFamilyId(data?.family_id ?? null)
+        try {
+          if (data?.family_id) localStorage.setItem('fw:famid', JSON.stringify({ uid: session.user.id, fid: data.family_id }))
+          else localStorage.removeItem('fw:famid')
+        } catch { /* ignore */ }
       } catch {
         // If this fails (network blip, RLS hiccup, etc.) don't leave the
         // person stuck on a loading screen forever — treat it as "no
         // family yet" so they land somewhere with a working Sign Out button.
-        if (!cancelled) setFamilyId(null)
+        if (!cancelled && !hasCache) setFamilyId(null)
       } finally {
         if (!cancelled) setCheckingMembership(false)
       }
@@ -44,7 +54,7 @@ function Screens() {
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [session?.user?.id])
 
   if (passwordRecovery) return <ResetPassword />
 
