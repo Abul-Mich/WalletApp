@@ -1,132 +1,170 @@
-# Family Wallet — Full Build (Days 1-5 + Planned Payments + Roles/Budget Redesign)
+# Family Wallet
 
-Covers: auth, family create/join, deposits, expense logging (full CRUD), live wallet
-balance, multi-currency with bidirectional exchange rates, per-member spending limits,
-a family-wide budget target, per-category budgets, superadmin/admin/member roles,
-recurring bill tracking, an in-app activity feed, category breakdown, transaction
-pagination, and PWA installability.
+A private, installable web app (PWA) that lets a family manage money together: a shared pool, personal wallets,
+cards for specific purposes, bills, spending limits and statistics, in USD and Lebanese pounds (LBP). Everyone in the
+family sees the same synced data on their own phone; admins set the rules.
 
-**Note:** this is the functional build. Styling is intentionally plain (see
-`src/index.css`) — you mentioned wanting a separate UI/visual pass, and nothing
-structural here should need to change for that; it's CSS/layout on top of a working base.
+It is built for **one family**, not as a public product. It runs on free tiers (Supabase + Vercel), has no
+native app, and keeps data usage low (small payloads, cached app shell, paginated lists).
 
-## 1. Set up Supabase
+> **Status:** in daily use and under active development. The UI is English only.
 
-1. Create a free project at https://supabase.com/dashboard.
-2. Open **SQL Editor** → New Query, paste the entire contents of `supabase/schema.sql`,
-   and run it. This creates all tables, roles, RLS policies, triggers, and realtime config.
-   - **Upgrading an existing database?** Just re-run the same file — the `alter table ...
-     add column if not exists` lines make it safe to run on top of an earlier version
-     without losing data. Existing families' creators do **not** automatically become
-     `superadmin` — see the note at the bottom of this file if you need to fix that.
-3. Copy your Project URL and `anon` key from **Project Settings → API**.
+---
 
-## 2. Configure and run
+## What it does
+
+| Area | What you can do |
+|---|---|
+| **Family and roles** | Create a family, invite members with a link. Three roles: **superadmin** (the creator, cannot be demoted or removed), **admin** (manages money and settings), **member**. Roles are enforced by the database, not just hidden in the UI. |
+| **Wallets** | A **family pool** (shared money), each member's **main wallet** (cash in hand), private **pockets** (savings goals only the owner sees) and **cards** (purpose-specific wallets such as "Groceries card", managed by admins). |
+| **Multi-currency** | Every wallet holds USD and/or LBP. Each record stores the exchange rate it was made at, so history never shifts when rates change. Admins set and override the family rate; members' rates must stay close to it. |
+| **Spending** | Log expenses with category, note, date and (for card spending) who it was for. Edit or delete your own; admins can fix anyone's. Balances recalculate automatically and a wallet can never go below zero. |
+| **Money in** | Record money from outside the family: salary, bonus, gift, other, or a **reimbursement** (which lowers the spending of the category it pays back, and can count for a specific person). |
+| **Limits and budgets** | Per-member spending limits, a family budget target and per-category budgets. A reimbursement lowers the limits it affects. In-app warnings when someone is close to or over a limit. |
+| **Bills** | Family bills (paid by admins from the pool or a card) and personal bills (paid from your own wallet). Monthly, weekly or one-time, with a Bills page, due-soon summary and phone reminders. |
+| **Statistics** | Spending by category, person and day for any period, with drill-down to the underlying records (expenses and reimbursements). |
+| **Common expenses** | Costs the whole family shares, paid from the pool or a card, optionally attributed to one person. |
+| **Phone alerts** | A push notification at 09:00 (Beirut time) for bills due soon or overdue, to each person who turns it on. |
+| **Installable** | Add to Home Screen on iOS or Android: full-screen, offline app shell, update prompt when a new version is ready. |
+
+---
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  subgraph Phone / Browser
+    A[React PWA<br/>Vite + service worker]
+  end
+  subgraph Supabase
+    B[(Postgres<br/>ledger + RLS)]
+    C[Auth]
+    D[Realtime]
+    E[Edge Function<br/>send-bill-alerts]
+    F[pg_cron]
+  end
+  A -- "read (RLS)" --> B
+  A -- "write via RPC only" --> B
+  A <-- login --> C
+  B -- changes --> D --> A
+  F -- "daily 06:00/07:00 UTC" --> E
+  E -- Web Push --> A
+  E -- reads bills --> B
+  V[Vercel<br/>static hosting] -- serves --> A
+```
+
+There is **no custom backend server**. The browser talks directly to Supabase, and all money rules live in the
+database as functions. The front end is deliberately thin.
+
+### Key design decisions
+
+- **A real ledger, not editable balances.** Every wallet is a row in `wallet_accounts`; every movement is a row in
+  `wallet_entries`. The balance is cached on the account and recomputed in one place (`_settle()`); the rule
+  "no wallet below zero" is checked at commit time.
+- **Writes only through database functions.** Clients can *read* their family's data but cannot write to the money
+  tables. Every change goes through a `SECURITY DEFINER` function (`create_income`, `update_income`,
+  `pay_common_bill`, ...) that checks who is calling, their role and the business rules, and locks the affected
+  accounts to avoid races.
+- **Row Level Security is the security boundary.** Data is family-wide readable, with exceptions (a member's pockets
+  are private to them). The UI hides what you cannot do, but the database is what actually refuses.
+- **Snapshots over recalculation.** Each record keeps its own exchange rate, so statistics and history are stable.
+- **Reversible changes.** Every database migration has a rollback script and a test file, run on a scratch project
+  before the live one.
+- **Dates use the Beirut calendar** (`Asia/Beirut`) so "today", periods and the 09:00 alert mean the same thing for
+  everyone.
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Front end | React 18, Vite 5, React Router, Recharts |
+| PWA | `vite-plugin-pwa` (Workbox, update prompt), hand-written push handler |
+| Backend | Supabase: Postgres, Auth, Realtime, Edge Functions (Deno) |
+| Notifications | Web Push (VAPID) sent by an Edge Function on a `pg_cron` schedule |
+| Hosting | Vercel (static build) |
+| Language | JavaScript (JSX) on the client, SQL and PL/pgSQL for the rules, TypeScript for the Edge Function |
+
+---
+
+## Repository layout
+
+```
+src/
+  pages/            screens and sheets (Dashboard, Statistics, Bills, forms, edit sheets)
+  components/       small shared pieces (amount input, chips, confirm dialog, PWA status, push toggle)
+  lib/              data access and logic (wallets.js, bills.js, budgets.js, push.js, formatting, roles)
+  AuthContext.jsx   session and current member
+public/             icons, push service-worker script
+supabase/
+  schema.sql        the original base schema (before the ledger)
+  migrations/       numbered SQL migrations 0001 to 0018, with its own README (order, rollback ladder)
+  rollback/         one *_down.sql per migration
+  tests/            SQL test files for each migration (scratch projects only)
+  audit/            read-only audit and integrity-check queries
+  functions/        send-bill-alerts (Edge Function) and its README
+vite.config.js      PWA manifest and caching rules
+```
+
+---
+
+## Running it yourself
+
+You need Node 18+ and a free [Supabase](https://supabase.com) project.
 
 ```bash
-cp .env.example .env.local
-# paste your Project URL and anon key into .env.local
 npm install
-npm run dev
+cp .env.example .env.local     # fill in your Supabase URL and anon key (never commit this file)
+npm run dev                    # http://localhost:5173
+npm run build                  # production build in dist/
 ```
 
-## 3. What changed in this redesign
+**Database.** Run `supabase/schema.sql`, then the numbered files in `supabase/migrations/` in order. Read
+`supabase/migrations/README.md` first: it explains the order, how each migration is tested on a scratch project,
+and the rollback ladder. **Never run a migration on live data before a scratch run.**
 
-**Roles: superadmin / admin / member**
-- Whoever creates the family becomes `superadmin` — the only role that can't be removed
-  or have its role changed by anyone, including itself (enforced by a database trigger,
-  not just the UI).
-- A superadmin can promote members to `admin` or demote admins back to `member`, under
-  **Admin Settings → Manage Admins**. Multiple admins are supported (e.g. both parents).
-- `admin` and `superadmin` both get full management access (budgets, categories, limits,
-  deposits, exchange rates, invites) — the distinction only matters for role management
-  itself and for "can this member be removed."
-- A plain member cannot promote themselves — this is blocked at the database level via a
-  trigger (`prevent_role_privilege_escalation`), not just hidden in the UI.
+**Phone alerts (optional).** Setup is in `supabase/functions/send-bill-alerts/README.md`: generate VAPID keys, set
+the function's secrets, deploy it with JWT verification off (it checks its own secret or the caller's login), and
+schedule it with `supabase/push_schedule.example.sql`. The public key goes in `VITE_VAPID_PUBLIC_KEY`; the private
+key stays a Supabase secret.
 
-**Two separate budget concepts**
-- **Family Balance** (unchanged): real cash = total deposits − total spent.
-- **Family Budget** (new): a *target* the admin sets for the period (Admin Settings →
-  Family Budget), tracked independently of actual deposits. Shows "how much of our
-  planned budget is used," even if real cash doesn't match the target exactly.
-- **My Balance This Period** (reframed from the old limit-only banner): every member now
-  sees a running total of what they've drawn from the budget this period, not just a
-  warning when they're close to a cap. If no personal limit is set, this section simply
-  doesn't show (there's nothing to track against).
-- **Category Budgets** (new): independent per-category caps, unrelated to any member's
-  personal limit — set under Admin Settings → Categories & Category Budgets. Two members
-  can each be under their own limit while a shared category (e.g. Groceries) is over its
-  separate cap, and vice versa — no cross-enforcement between the two tracks, by design.
-- No rollover: every period (week/month) starts fresh at zero spent for all three of the
-  above. Unused budget doesn't carry into the next period.
+**Deploy.** Connect the repo to Vercel with the two `VITE_` variables (and the VAPID public key). Pushes to the main
+branch deploy automatically. Installed apps show a "new version ready" banner; the new version takes over when
+the user taps it.
 
-**Full transaction CRUD**
-- Every transaction in Transaction History now has **Edit** and **Delete** — a member can
-  edit/delete their own, an admin/superadmin can edit/delete anyone's. Editing correctly
-  re-triggers the wallet balance recalculation (the existing trigger already recomputes
-  from source data on any change, so this "just worked" once the RLS policy allowed it).
+### Secrets: what goes where
 
-**Bidirectional exchange rate overrides**
-- Admin enters a rate in one direction (e.g. "1 USD = 89500 LBP") and the reverse
-  (LBP → USD) is automatically derived and stored too — no need to enter both directions
-  manually.
+| Value | Where | Public? |
+|---|---|---|
+| Supabase URL and anon key | `.env.local`, Vercel env vars | Yes (protected by RLS) |
+| VAPID public key | `VITE_VAPID_PUBLIC_KEY` | Yes |
+| VAPID private key, `CRON_SECRET` | Supabase function secrets only | **No** |
+| Supabase service-role key | Edge Function runtime only | **No** |
 
-**In-app activity feed ("notify me when someone spends")**
-- A live-updating "Recent Activity" list shows the last 10 spend events across the
-  family, riding the same realtime channel already used for balance sync — no native
-  push notification infrastructure, and effectively no added data cost.
+`.env.local`, build output and `*.zip` files are git-ignored.
 
-## 4. Test checklist for the new pieces
+---
 
-- Create a family — the creator should show as **superadmin** (purple badge), not admin.
-- As superadmin, promote a second member to admin; confirm that member now sees Admin
-  Settings. Demote them back; confirm the section disappears for them again.
-- Confirm the superadmin never appears in the promote/demote list, and can't be removed.
-- Try (via browser devtools, logged in as a plain member) to directly call
-  `supabase.from('members').update({ role: 'admin' }).eq('id', <own id>)` — should be
-  rejected by the database trigger, not just hidden in the UI.
-- Set a Family Budget (e.g. 1000/monthly) — log some expenses, confirm the Family Budget
-  card tracks correctly and turns yellow/red near/over the target, independent of the
-  actual Family Balance card above it.
-- Set a Category Budget on one category — log expenses in and out of that category,
-  confirm only that category's spend counts against its own cap.
-- Edit a transaction's amount — confirm Family Balance, Category Breakdown, and any
-  relevant limit/budget bars all update correctly. Delete a transaction — same check.
-- Log an expense as one member while viewing as another (two browser sessions) — confirm
-  it appears in Recent Activity live on the other session.
-- Set a manual exchange rate override for USD→LBP, then log a transaction in LBP — it
-  should convert using the override. Separately confirm a transaction logged in USD converts
-  correctly using the auto-derived LBP→USD inverse.
+## Testing
 
-## 5. What's intentionally NOT included
+There is no front-end test suite yet. Money logic is tested in SQL: each `supabase/tests/*.sql` file is pasted into
+the Supabase SQL editor of a **scratch** project, creates what it needs, asserts the rules (permissions, balances,
+refusals, rollbacks) and removes everything again. A clean run ends with an "ALL ... PASSED" row. The front end is
+checked with a production build (`npm run build`) and by hand.
 
-Receipt photos, approval workflows, audit logs, PDF/CSV export, offline conflict
-resolution, native push notifications, multi-language localization, native iOS/Android
-apps, multi-tenancy, budget rollover/history. See the original project spec's Section
-3.6/9 for the full out-of-scope list; none of this new work changes that.
+---
 
-## 6. Migrating an existing family to superadmin
+## How it was built
 
-If you already had a family created before this redesign, its creator has role `admin`,
-not `superadmin` — there was no superadmin concept yet when they signed up. Fix once,
-manually, in the Supabase SQL Editor:
+Iteratively, one vertical slice at a time: a short mockup for bigger changes, then the database function with its
+tests, then the screen, then a build check, driven by real use of the app. The original five-day scope is in the
+project spec; the ledger, pockets, cards, bills, money-in, edits and phone alerts were added afterwards.
 
-```sql
-update members set role = 'superadmin'
-where family_id = '<your family id>' and role = 'admin'
-order by created_at asc limit 1;
-```
+## Known limits and ideas
 
-Run this once per existing family that needs a superadmin. New families created after
-this point get one automatically.
-
-## Project structure recap
-
-```
-family-wallet/
-├── supabase/schema.sql       # DB schema, roles, RLS, triggers, realtime config
-├── public/                   # PWA icons + favicon (placeholders — swap in UI pass)
-├── src/
-│   ├── lib/                  # exchangeRates.js, spendingLimits.js, budgets.js, roles.js
-│   └── pages/                # Login, FamilySetup, Dashboard, and all forms/widgets
-```
+- Phone alerts on iPhone need the app added to the Home Screen first (iOS 16.4+).
+- Notification muting (per bill or "mute for a while") and yearly bills are not built yet.
+- Not included: receipt photos, approval workflows, CSV/PDF export, offline editing with conflict resolution,
+  native iOS/Android apps, multi-family (multi-tenant) support, other languages.
+- This is a personal family tool: no formal uptime promise, no compliance program.
