@@ -3,9 +3,21 @@ import { supabase } from './supabaseClient'
 
 const AuthContext = createContext(null)
 
+function readStoredSession() {
+  try {
+    const ref = new URL(import.meta.env.VITE_SUPABASE_URL).hostname.split('.')[0]
+    const stored = JSON.parse(localStorage.getItem(`sb-${ref}-auth-token`) || 'null')
+    return stored?.user?.id && stored?.access_token ? stored : null
+  } catch {
+    return null
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [session, setSession] = useState(null)
-  const [loading, setLoading] = useState(true)
+  // Start from the session Supabase keeps in localStorage so a returning user does not wait on a "Loading..."
+  // screen; getSession() below confirms (or refreshes) it right after.
+  const [session, setSession] = useState(readStoredSession)
+  const [loading, setLoading] = useState(() => !readStoredSession())
   // Set when the user lands back on the app from the "reset your password"
   // email link. Supabase fires this auth event once it exchanges that
   // link's token for a temporary session — we use it to show a "set new
@@ -21,6 +33,9 @@ export function AuthProvider({ children }) {
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession)
+      if (event === 'SIGNED_OUT') {
+        try { ['fw:fam', 'fw:famid', 'fw:view'].forEach((k) => localStorage.removeItem(k)) } catch { /* ignore */ }
+      }
       if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
     })
 

@@ -120,13 +120,21 @@ function ProfileMenuButton({
 
 export default function Dashboard({ familyId }) {
   const { session } = useAuth();
-  const [family, setFamily] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [myMember, setMyMember] = useState(null);
+  // Last-known family and members, so reopening the app shows the screen straight away while fresh data loads.
+  const [cache] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem("fw:fam") || "null");
+      if (c && c.uid === session.user.id && c.fam?.id === familyId) return c;
+    } catch { /* no cache */ }
+    return null;
+  });
+  const [family, setFamily] = useState(cache?.fam ?? null);
+  const [members, setMembers] = useState(cache?.active ?? []);
+  const [myMember, setMyMember] = useState(cache?.me ?? null);
   const [invite, setInvite] = useState(null);
   const [rawAccounts, setRawAccounts] = useState([]);
   const [rate, setRate] = useState(null);
-  const [allMembers, setAllMembers] = useState([]);
+  const [allMembers, setAllMembers] = useState(cache?.mem ?? []);
   const [cards, setCards] = useState([]);
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -138,7 +146,19 @@ export default function Dashboard({ familyId }) {
   const [familyBudgetSpend, setFamilyBudgetSpend] = useState(null);
   const [plannedPayments, setPlannedPayments] = useState([]);
   const [notifications, setNotifications] = useState([]);
-  const [view, setView] = useState(() => (new URLSearchParams(window.location.search).get("view") === "bills" ? "bills" : "home")); // 'home' | 'settings' | 'family' | 'me' | 'statistics' | 'bills'
+  // 'home' | 'settings' | 'family' | 'me' | 'statistics' | 'bills'. The last screen is remembered for 12 hours so
+  // closing and reopening the app (iOS drops it from memory) returns to where you were.
+  const [view, setView] = useState(() => {
+    if (new URLSearchParams(window.location.search).get("view") === "bills") return "bills";
+    try {
+      const saved = JSON.parse(localStorage.getItem("fw:view") || "null");
+      if (saved && ["home", "settings", "family", "me", "statistics", "bills"].includes(saved.v) && Date.now() - saved.t < 12 * 3600 * 1000) return saved.v;
+    } catch { /* storage unavailable: start at home */ }
+    return "home";
+  });
+  useEffect(() => {
+    try { localStorage.setItem("fw:view", JSON.stringify({ v: view, t: Date.now() })); } catch { /* ignore */ }
+  }, [view]);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addOpts, setAddOpts] = useState({}); // {tab, dest} to open the + sheet on a given tab
   const [showMyHistoryModal, setShowMyHistoryModal] = useState(false);
@@ -196,6 +216,9 @@ export default function Dashboard({ familyId }) {
     setMembers(active);
     setMyMember(resolvedMember);
     setInvite(inv);
+    if (fam && resolvedMember) {
+      try { localStorage.setItem("fw:fam", JSON.stringify({ uid: session.user.id, fam, mem: mem || [], active, me: resolvedMember })); } catch { /* ignore */ }
+    }
 
     loadMySpend(resolvedMember);
     loadAllMemberSpends(active);
