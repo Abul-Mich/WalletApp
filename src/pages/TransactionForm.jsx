@@ -60,14 +60,14 @@ function LimitCard({ label, spend, added, extra }) {
 // Card or pool + family  -> a common expense (family budget only, no personal limit)
 // `limits` = { me, members: {id: spend}, family } (from getMemberSpend); optional.
 export default function TransactionForm({
-  familyId, memberId, categories, accounts, cards = [], members = [], amAdmin, presetCardId, limits, onDone,
+  familyId, memberId, categories, accounts, cards = [], members = [], amAdmin, presetCardId, presetPool, limits, onDone,
 }) {
   const myWallets = accounts?.members?.[memberId] || {};
   const cardChoices = cards
     .filter((k) => !k.archived && accounts?.cards?.[k.id])
     .map((k) => ({ card: k, acct: accounts.cards[k.id] }));
 
-  const [paidFrom, setPaidFrom] = useState(presetCardId && accounts?.cards?.[presetCardId] ? `card:${presetCardId}` : "wallet");
+  const [paidFrom, setPaidFrom] = useState(presetCardId && accounts?.cards?.[presetCardId] ? `card:${presetCardId}` : presetPool && amAdmin ? "pool" : "wallet");
   const [forWho, setForWho] = useState(""); // "" = me, a member id, or "family"
   const [split, setSplit] = useState(false);
   const [showChange, setShowChange] = useState(false);

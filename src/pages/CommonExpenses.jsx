@@ -82,6 +82,15 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
   };
   const catName = (id) => categories.find((c) => c.id === id)?.name;
 
+  const weekAhead = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const dueSoon = bills.filter((b) => b.next_due_date <= weekAhead);
+  const shortDate = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const billsLine = bills.length === 0
+    ? "No bills yet"
+    : dueSoon.length
+      ? `${dueSoon.length} due soon · next: ${bills[0].name}, ${shortDate(bills[0].next_due_date)}`
+      : `Next: ${bills[0].name}, ${shortDate(bills[0].next_due_date)}`;
+
   const { monthTotal, byPerson } = useMemo(() => {
     const since = monthStart ? new Date(monthStart) : null;
     let total = 0;
@@ -131,39 +140,45 @@ export default function CommonExpenses({ familyId, members, categories, amAdmin,
   }
 
   return (
-    <section className="card">
-      <div className="card-header-row">
-        <h2>Common expenses</h2>
-        {onOpenBills && (
-          <button type="button" className="link-button" onClick={onOpenBills}>Bills{bills.length ? ` (${bills.length})` : ""}</button>
-        )}
+    <section className="fam-shared">
+      <div className="fam-hero">
+        <div>
+          <span className="fam-label">Shared costs this month</span>
+          <span className="fam-hero-value">{formatUsd(monthTotal)}</span>
+        </div>
       </div>
-      <p className="hint">
-        Paid from the family pool by default ({formatUsd(bal(accounts.pool.USD))} · {formatMoney(bal(accounts.pool.LBP), "LBP")}). They count toward the family budget, not anyone's personal limit.
+      {onOpenBills && (
+        <button type="button" className="fam-bills" onClick={onOpenBills}>
+          <span className="fam-bills-text">
+            <strong>Bills</strong>
+            <span className={dueSoon.length ? "soon" : ""}>{billsLine}</span>
+          </span>
+          <span aria-hidden="true">&rsaquo;</span>
+        </button>
+      )}
+      <p className="fam-note">
+        Paid from the pool by default ({formatUsd(bal(accounts.pool.USD))} · {formatMoney(bal(accounts.pool.LBP), "LBP")}). Counts toward the family budget, not anyone's personal limit.
       </p>
-
-      <div className="net-line" style={{ margin: "12px 0" }}>
-        <span>This month</span>
-        <strong>{formatUsd(monthTotal)}</strong>
-      </div>
       {byPerson.length > 0 && (
-        <ul className="breakdown-list" style={{ marginBottom: 12 }}>
+        <div className="fam-chips">
           {byPerson.map(([id, total]) => (
-            <li key={id}><div className="breakdown-row"><span>For {name(id) ?? "a member"}</span><span>{formatUsd(total)}</span></div></li>
+            <span className="fam-pill" key={id}>For {name(id) ?? "a member"} <strong>{formatUsd(total)}</strong></span>
           ))}
-        </ul>
+        </div>
       )}
 
-      <h3 className="subsection">Recent</h3>
-      {expenses.length === 0 && <p className="hint">Nothing recorded yet.</p>}
-      <ul className="txn-list">
-        {expenses.map((e) => (
-          <ExpenseRow key={e.id} e={e} name={name} catName={catName} sourceName={sourceName} amAdmin={amAdmin} onRemove={remove} env={env} />
-        ))}
-      </ul>
-      {expenses.length >= 3 ? (
-        <button type="button" className="load-more" onClick={() => setShowHistory(true)}>More</button>
-      ) : null}
+      <div className="fam-list">
+        <h3 className="fam-section-title">Recent</h3>
+        {expenses.length === 0 && <p className="fam-empty">Nothing recorded yet. Use "Add a shared cost" below for rent, electricity, school fees and the like.</p>}
+        <ul className="txn-list">
+          {expenses.map((e) => (
+            <ExpenseRow key={e.id} e={e} name={name} catName={catName} sourceName={sourceName} amAdmin={amAdmin} onRemove={remove} env={env} />
+          ))}
+        </ul>
+        {expenses.length >= 3 ? (
+          <button type="button" className="load-more" onClick={() => setShowHistory(true)}>See all shared costs</button>
+        ) : null}
+      </div>
       {error && <p className="status error">{error}</p>}
       {showHistory && (
         <HistorySheet
