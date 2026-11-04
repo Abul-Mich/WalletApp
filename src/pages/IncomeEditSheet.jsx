@@ -111,11 +111,18 @@ export default function IncomeEditSheet({ record, kind: kindProp, categories: ca
             </div>
           )}
 
-          {shared && amAdmin && (
+          {shared && (
             <PersonChips
               label="Counts for" hint="(optional)" value={forWho} onChange={setForWho}
               options={[{ value: "", label: "Whole family" }, ...members.filter((m) => !m.removed_at).map((m) => ({ value: m.id, label: m.display_name }))]}
             />
+          )}
+
+          {!shared && ownerKind && (
+            <p className="sf-muted sf-small">
+              Counts for {members.find((m) => m.id === record.beneficiary_member_id)?.display_name || "the wallet's owner"}, because it sits in their own wallet.
+              To count it for someone else, delete it and add it to the family pool or a card.
+            </p>
           )}
 
           {cur === "LBP" && (
