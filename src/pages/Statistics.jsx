@@ -342,6 +342,10 @@ export default function Statistics({ familyId }) {
   return (
     <div className="stats-container has-dock">
       <div className="stats-top">
+        <div className="period-head">
+          <h2 className="period-title">{title}</h2>
+          <p className={`range-note ${range.error ? "error" : ""}`}>{range.error ?? (gran === "day" ? formatDate(range.start) : periodText)}</p>
+        </div>
         <label className="member-pill">
           <span className="sk-sr">Member</span>
           <select id="member-filter" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} aria-label="Member">
@@ -364,11 +368,6 @@ export default function Statistics({ familyId }) {
           </div>
         </div>
       )}
-      <div className="period-head">
-        <h2 className="period-title">{title}</h2>
-        <p className={`range-note ${range.error ? "error" : ""}`}>{range.error ?? (gran === "day" ? formatDate(range.start) : periodText)}</p>
-      </div>
-
       {loading ? (
         <StatsSkeleton chart={gran !== "day"} />
       ) : (

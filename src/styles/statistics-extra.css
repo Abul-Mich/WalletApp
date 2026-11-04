@@ -23,7 +23,9 @@
   cursor: pointer;
   min-height: 40px;
 }
+@media (hover: hover) {
 .chip:hover { background: var(--surface-hover); }
+}
 .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 
 .custom-range { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
@@ -36,7 +38,10 @@
   display: block; width: 100%; text-align: left; background: transparent; border: 1px solid transparent;
   color: var(--text); border-radius: 10px; padding: 8px 10px; cursor: pointer;
 }
-.cat-row:hover, .cat-row:focus-visible { background: var(--surface-hover); border-color: var(--border); }
+.cat-row:focus-visible { background: var(--surface-hover); border-color: var(--border); }
+@media (hover: hover) {
+.cat-row:hover { background: var(--surface-hover); border-color: var(--border); }
+}
 .cat-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
 .cat-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cat-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -144,3 +149,8 @@
 /* The page sits in a grid with auto side margins, which made it shrink to its content: fill the width */
 .stats-container.has-dock { width: 100%; box-sizing: border-box; }
 .stats-top { justify-content: flex-end; }
+
+/* Period title and member picker share one row */
+.stats-top { align-items: flex-start; justify-content: space-between; }
+.stats-top .period-head { min-width: 0; flex: 1; }
+.stats-top .member-pill { flex: 0 0 auto; margin-top: 2px; }
