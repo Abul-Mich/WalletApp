@@ -7,7 +7,7 @@ import { formatUsd, formatShortDate, formatDate } from "../lib/format";
 import TransactionRow from "./TransactionRow";
 import IncomeRow from "./IncomeRow";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import "../styles/statistics.css";
 import "../styles/statistics-extra.css";
@@ -41,27 +41,59 @@ function midnight(key) {
   return new Date(t);
 }
 
-const PRESETS = [
-  { id: "today", label: "Today" },
-  { id: "yesterday", label: "Yesterday" },
-  { id: "week", label: "This week" },
-  { id: "month", label: "This month" },
-  { id: "custom", label: "Custom range" },
+const GRANS = [
+  { id: "day", label: "Day" },
+  { id: "week", label: "Week" },
+  { id: "month", label: "Month" },
+  { id: "year", label: "Year" },
+  { id: "custom", label: "Custom" },
 ];
+const UNIT_OF = { day: "day", week: "week", month: "month", year: "year" };
+const CURRENT_OF = { day: "Today", week: "This week", month: "This month", year: "This year" };
+const monthKey = (y, m) => new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+const labelFmt = (opts) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...opts });
 
-// Returns { start, end (exclusive), error } for a preset.
-function rangeFor(preset, customStart, customEnd) {
+// Returns { start, end (exclusive), error } for a period: gran = day | week | month | year (off = 0 is the
+// current one, -1 the one before ...) or "custom" (the two dates).
+function rangeFor(gran, off, customStart, customEnd) {
   const today = todayKey();
-  if (preset === "today") return { start: midnight(today), end: midnight(addDays(today, 1)) };
-  if (preset === "yesterday") return { start: midnight(addDays(today, -1)), end: midnight(today) };
-  if (preset === "week") {
+  if (gran === "day") { const k = addDays(today, off); return { start: midnight(k), end: midnight(addDays(k, 1)) }; }
+  if (gran === "week") {
     const dow = (new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7; // Monday = 0
-    return { start: midnight(addDays(today, -dow)), end: midnight(addDays(today, 1)) };
+    const mon = addDays(today, -dow + 7 * off);
+    return { start: midnight(mon), end: midnight(addDays(mon, 7)) };
   }
-  if (preset === "month") return { start: midnight(`${today.slice(0, 8)}01`), end: midnight(addDays(today, 1)) };
+  if (gran === "month") {
+    const y = Number(today.slice(0, 4)); const m = Number(today.slice(5, 7)) - 1 + off;
+    return { start: midnight(monthKey(y, m)), end: midnight(monthKey(y, m + 1)) };
+  }
+  if (gran === "year") {
+    const y = Number(today.slice(0, 4)) + off;
+    return { start: midnight(`${y}-01-01`), end: midnight(`${y + 1}-01-01`) };
+  }
   if (!customStart || !customEnd) return { start: midnight(today), end: midnight(addDays(today, 1)), error: "Pick a start and an end date." };
   if (customStart > customEnd) return { start: midnight(today), end: midnight(addDays(today, 1)), error: "The start date is after the end date." };
   return { start: midnight(customStart), end: midnight(addDays(customEnd, 1)) };
+}
+
+// The offset of the period of kind `gran` that contains a given moment (switching Month -> Day keeps the date).
+function offsetFor(gran, ms) {
+  for (let o = 0; o > -4000; o--) { const r = rangeFor(gran, o); if (ms >= r.start.getTime() && ms < r.end.getTime()) return o; }
+  return 0;
+}
+
+// Short title of a period for the header and the dock.
+function titleFor(gran, off, range) {
+  const last = new Date(range.end.getTime() - 1);
+  if (gran === "day") return off === 0 ? "Today" : off === -1 ? "Yesterday" : labelFmt({ weekday: "short", month: "short", day: "numeric" }).format(range.start);
+  if (gran === "week") {
+    const a = labelFmt({ month: "short", day: "numeric" }).format(range.start);
+    const sameMonth = labelFmt({ month: "numeric" }).format(range.start) === labelFmt({ month: "numeric" }).format(last);
+    return `${a} – ${sameMonth ? labelFmt({ day: "numeric" }).format(last) : labelFmt({ month: "short", day: "numeric" }).format(last)}`;
+  }
+  if (gran === "month") return labelFmt({ month: "long", year: "numeric" }).format(range.start);
+  if (gran === "year") return labelFmt({ year: "numeric" }).format(range.start);
+  return "Custom range";
 }
 
 // ---------- chart colors: validated categorical palette, fixed order ----------
@@ -73,13 +105,57 @@ const usd = (t) =>
 const DRILL_PAGE = 20;
 const TABLE_OF = { transaction: "transactions", card: "card_transactions", common: "common_expenses" };
 
+// Grey shimmering placeholders with the same layout as the real page, shown while a period loads.
+const SK_BARS = [46, 72, 38, 88, 60, 30, 78, 52, 66, 42, 84, 34];
+const SK_CATS = [74, 56, 40, 26];
+function StatsSkeleton({ chart }) {
+  return (
+    <>
+      <p className="sk-sr" role="status">Loading statistics…</p>
+      <div className="stats-body" aria-hidden="true">
+        <div className="total-card">
+          <div className="sk sk-label" />
+          <div className="sk sk-big" />
+          <div className="sk sk-meta" />
+        </div>
+        <div className="stats-mini">
+          {[0, 1, 2, 3].map((i) => (
+            <div className="summary-card" key={i}>
+              <div className="sk sk-label" />
+              <div className="sk sk-value" />
+            </div>
+          ))}
+        </div>
+        <div className="stats-charts">
+          {chart && (
+            <div className="chart-card">
+              <h3>Spending trend</h3>
+              <div className="sk-bars">{SK_BARS.map((h, i) => <span key={i} className="sk sk-bar" style={{ height: `${h}%` }} />)}</div>
+            </div>
+          )}
+          <div className="chart-card">
+            <h3>Spending by category</h3>
+            {SK_CATS.map((w, i) => (
+              <div className="sk-cat" key={i}>
+                <div className="sk-cat-top"><span className="sk sk-name" /><span className="sk sk-amt" /></div>
+                <span className="sk sk-track" style={{ width: `${w}%` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Statistics({ familyId }) {
   const { session } = useAuth();
   const [members, setMembers] = useState([]);
   const [myMember, setMyMember] = useState(null);
 
   const [selectedMember, setSelectedMember] = useState("all");
-  const [preset, setPreset] = useState("month");
+  const [gran, setGran] = useState("month");
+  const [off, setOff] = useState(0); // 0 = the current period, -1 = the one before ...
   const [customStart, setCustomStart] = useState(() => `${todayKey().slice(0, 8)}01`);
   const [customEnd, setCustomEnd] = useState(() => todayKey());
   const [drill, setDrill] = useState(null); // { name, refs: [{kind, categoryId}], total, count } being inspected
@@ -91,6 +167,7 @@ export default function Statistics({ familyId }) {
   const [incomeRows, setIncomeRows] = useState([]);
   const [categories, setCategories] = useState([]);
   const [familyMoney, setFamilyMoney] = useState(0);
+  const [prevTotal, setPrevTotal] = useState(null); // spending of the period before (for "vs previous")
   const [loading, setLoading] = useState(true);
   const [chartHeight, setChartHeight] = useState(300);
 
@@ -101,7 +178,16 @@ export default function Statistics({ familyId }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const range = useMemo(() => rangeFor(preset, customStart, customEnd), [preset, customStart, customEnd]);
+  const range = useMemo(() => rangeFor(gran, off, customStart, customEnd), [gran, off, customStart, customEnd]);
+
+  // Switching Day / Week / Month / Year keeps the date you are looking at.
+  function pickGran(g) {
+    if (g === gran) return;
+    if (g === "custom") { setGran(g); return; }
+    const mid = (range.start.getTime() + range.end.getTime()) / 2;
+    setOff(gran === "custom" ? 0 : offsetFor(g, Math.min(Date.now(), mid)));
+    setGran(g);
+  }
 
   // Load the records of the chosen period.
   useEffect(() => {
@@ -123,6 +209,12 @@ export default function Statistics({ familyId }) {
           familyId, from: range.start.toISOString(), to: range.end.toISOString(),
           memberId: selectedMember !== "all" ? selectedMember : null,
         });
+        let prev = null;
+        if (gran !== "custom" && off < 0) {
+          const pr = rangeFor(gran, off - 1);
+          const pRoll = await spendRollup({ familyId, from: pr.start.toISOString(), to: pr.end.toISOString(), memberId: selectedMember !== "all" ? selectedMember : null });
+          prev = Number(pRoll.total);
+        }
         let incQ = supabase.from("deposits").select("*").eq("family_id", familyId).neq("kind", "reimbursement")
           .gte("created_at", range.start.toISOString()).lt("created_at", range.end.toISOString());
         if (selectedMember !== "all") incQ = incQ.eq("beneficiary_member_id", selectedMember);
@@ -135,6 +227,7 @@ export default function Statistics({ familyId }) {
         setCategories(cats || []);
         setFamilyMoney(money);
         setRollup(roll);
+        setPrevTotal(prev);
       } catch (e) {
         console.error("Error loading statistics:", e);
       } finally {
@@ -155,7 +248,25 @@ export default function Statistics({ familyId }) {
   const stats = useMemo(() => {
     const total = Number(rollup.total);
 
-    const trend = rollup.daily.map((d) => ({ date: formatShortDate(`${d.day}T12:00:00+03:00`), amount: Number(Number(d.total).toFixed(2)) }));
+    // One bar per day (per month for long ranges), empty days included, nothing for days still to come.
+    const byDay = {};
+    rollup.daily.forEach((d) => { byDay[d.day] = (byDay[d.day] || 0) + Number(d.total); });
+    const firstKey = dayKey(range.start.toISOString());
+    const endKey = dayKey(new Date(range.end.getTime() - 1).toISOString());
+    const lastKey = endKey < todayKey() ? endKey : todayKey();
+    const keys = [];
+    for (let k = firstKey; k <= lastKey && keys.length < 800; k = addDays(k, 1)) keys.push(k);
+    let trend;
+    if (keys.length > 62) {
+      const byMonth = {};
+      keys.forEach((k) => { byMonth[k.slice(0, 7)] = (byMonth[k.slice(0, 7)] || 0) + (byDay[k] || 0); });
+      trend = Object.entries(byMonth).map(([m, v]) => ({ date: labelFmt({ month: "short" }).format(new Date(`${m}-15T12:00:00Z`)), amount: Number(v.toFixed(2)) }));
+    } else {
+      trend = keys.map((k) => ({
+        date: keys.length <= 7 ? labelFmt({ weekday: "short" }).format(new Date(`${k}T12:00:00Z`)) : String(Number(k.slice(8))),
+        amount: Number((byDay[k] || 0).toFixed(2)),
+      }));
+    }
 
     // Merge groups that share a display name (a category used by expenses and card spends is one row).
     const byCat = {};
@@ -185,6 +296,8 @@ export default function Statistics({ familyId }) {
     return { total, income: Number(rollup.income || 0), trend, cats, people, avgDaily: total / days, top: cats[0] };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rollup, categories, members, range]);
+  const title = titleFor(gran, off, range);
+  const delta = prevTotal != null && prevTotal > 0 ? ((stats.total - prevTotal) / prevTotal) * 100 : null;
 
   const amAdmin = myMember && isAdmin(myMember.role);
   // Records of the opened category, newest first, fetched a page at a time.
@@ -227,21 +340,19 @@ export default function Statistics({ familyId }) {
   };
 
   return (
-    <div className="stats-container">
-      <div className="stats-header">
-        <h1>Statistics</h1>
-        <p>Family financial overview and insights</p>
+    <div className="stats-container has-dock">
+      <div className="stats-top">
+        <label className="member-pill">
+          <span className="sk-sr">Member</span>
+          <select id="member-filter" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} aria-label="Member">
+            <option value="all">All members</option>
+            {members.filter((m) => !m.removed_at).map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
+          </select>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+        </label>
       </div>
 
-      <div className="period-chips" role="group" aria-label="Period">
-        {PRESETS.map((p) => (
-          <button key={p.id} type="button" className="chip" aria-pressed={preset === p.id} onClick={() => setPreset(p.id)}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {preset === "custom" && (
+      {gran === "custom" && (
         <div className="custom-range">
           <div className="filter-group">
             <label htmlFor="start-date">From</label>
@@ -253,35 +364,35 @@ export default function Statistics({ familyId }) {
           </div>
         </div>
       )}
-      <p className={`range-note ${range.error ? "error" : ""}`}>{range.error ?? periodText}</p>
-
-      <div className="stats-filters">
-        <div className="filter-group">
-          <label htmlFor="member-filter">Member</label>
-          <select id="member-filter" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} className="filter-select">
-            <option value="all">All members</option>
-            {members.filter((m) => !m.removed_at).map((m) => (<option key={m.id} value={m.id}>{m.display_name}</option>))}
-          </select>
-        </div>
+      <div className="period-head">
+        <h2 className="period-title">{title}</h2>
+        <p className={`range-note ${range.error ? "error" : ""}`}>{range.error ?? (gran === "day" ? formatDate(range.start) : periodText)}</p>
       </div>
 
       {loading ? (
-        <p>Loading statistics...</p>
+        <StatsSkeleton chart={gran !== "day"} />
       ) : (
         <>
-          <div className="stats-summary-cards">
-            <div className="summary-card">
-              <div className="summary-label">Total spent</div>
-              <div className="summary-value">{formatUsd(stats.total)}</div>
-              <div className="summary-meta">{rollup.count} record{Number(rollup.count) === 1 ? "" : "s"}</div>
+          <div className="stats-body">
+          <div className="total-card">
+            <div className="total-main">
+              <span className="summary-label">Total spent</span>
+              <span className="total-value">{formatUsd(stats.total)}</span>
+              <span className={`total-delta ${delta == null ? "flat" : delta > 0 ? "up" : "down"}`}>
+                {delta != null ? `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(0)}% vs previous ${UNIT_OF[gran]}` : gran !== "custom" && off === 0 ? "In progress" : ""}
+              </span>
             </div>
+            <span className="total-records">{rollup.count} record{Number(rollup.count) === 1 ? "" : "s"}</span>
+          </div>
+
+          <div className="stats-mini">
             <div className="summary-card">
               <div className="summary-label">Money in</div>
               <div className="summary-value stat-in">{stats.income > 0 ? "+" : ""}{formatUsd(stats.income)}</div>
               <div className="summary-meta">{incomeRows.length} from outside</div>
             </div>
             <div className="summary-card">
-              <div className="summary-label">Family money (USD)</div>
+              <div className="summary-label">Family money</div>
               <div className="summary-value">{formatUsd(familyMoney)}</div>
               <div className="summary-meta">Right now, all wallets</div>
             </div>
@@ -292,24 +403,26 @@ export default function Statistics({ familyId }) {
             </div>
             <div className="summary-card">
               <div className="summary-label">Top category</div>
-              <div className="summary-value" style={{ fontSize: "1.1rem" }}>{stats.top ? stats.top.name : "None"}</div>
+              <div className="summary-value summary-value-text">{stats.top ? stats.top.name : "None"}</div>
               <div className="summary-meta">{stats.top ? formatUsd(stats.top.value) : "No spending yet"}</div>
             </div>
           </div>
 
           <div className="stats-charts">
-            <div className="chart-card">
-              <h3>Spending trend</h3>
-              <ResponsiveContainer width="100%" height={chartHeight}>
-                <LineChart data={stats.trend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="date" stroke="var(--text-muted)" />
-                  <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
-                  <Tooltip formatter={(v) => formatUsd(v)} {...tooltipStyle} />
-                  <Line type="monotone" dataKey="amount" stroke="var(--viz-1)" strokeWidth={2} dot={{ fill: "var(--viz-1)", r: 4, stroke: "var(--surface)", strokeWidth: 2 }} activeDot={{ r: 6 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            {gran !== "day" && (
+              <div className="chart-card">
+                <h3>Spending trend</h3>
+                <ResponsiveContainer width="100%" height={chartHeight}>
+                  <BarChart data={stats.trend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="date" stroke="var(--text-muted)" interval="preserveStartEnd" minTickGap={8} />
+                    <YAxis stroke="var(--text-muted)" tickFormatter={(v) => `$${v}`} />
+                    <Tooltip formatter={(v) => formatUsd(v)} cursor={{ fill: "var(--surface-hover)" }} {...tooltipStyle} />
+                    <Bar dataKey="amount" fill="var(--viz-1)" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
             <div className="chart-card">
               <h3>Spending by category</h3>
@@ -380,6 +493,7 @@ export default function Statistics({ familyId }) {
           {Number(rollup.count) === 0 && incomeRows.length === 0 && (
             <div className="empty-state"><p>No records found for this period and member.</p></div>
           )}
+          </div>
         </>
       )}
 
@@ -411,6 +525,40 @@ export default function Statistics({ familyId }) {
           </div>
         </div>
       )}
+
+      {/* Period controls, docked just above the (unchanged) bottom navigation */}
+      <div className="stats-dock" role="group" aria-label="Choose the period">
+        <div className="stats-dock-seg">
+          {GRANS.map((g) => (
+            <button key={g.id} type="button" aria-pressed={gran === g.id} onClick={() => pickGran(g.id)}>{g.label}</button>
+          ))}
+        </div>
+        {gran !== "custom" ? (
+          <div className="stats-dock-nav">
+            <button type="button" className="stats-dock-arrow" aria-label={`Previous ${UNIT_OF[gran]}`} onClick={() => setOff((o) => o - 1)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+            </button>
+            <button type="button" className={`stats-dock-now ${loading ? "loading" : ""}`} disabled={off === 0 || loading} onClick={() => setOff(0)} aria-busy={loading}>
+              {loading ? (
+                <>
+                  <span className="stats-dock-busy"><span className="stats-dock-spin" aria-hidden="true" />Loading…</span>
+                  <span>{title}</span>
+                </>
+              ) : (
+                <>
+                  <strong>{title}</strong>
+                  <span>{off === 0 ? CURRENT_OF[gran] : `Back to ${CURRENT_OF[gran].toLowerCase()}`}</span>
+                </>
+              )}
+            </button>
+            <button type="button" className="stats-dock-arrow" aria-label={`Next ${UNIT_OF[gran]}`} disabled={off >= 0} onClick={() => setOff((o) => Math.min(0, o + 1))}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+            </button>
+          </div>
+        ) : (
+          <p className="stats-dock-hint">Pick the two dates at the top of the page.</p>
+        )}
+      </div>
     </div>
   );
 }

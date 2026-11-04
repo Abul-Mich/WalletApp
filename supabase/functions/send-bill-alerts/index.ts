@@ -17,30 +17,15 @@ const LATE_DAYS = 7;
 
 // ------------------------------------------------------------ pure logic --
 
-export type Bill = {
-  name: string;
-  amount: number;
-  currency: string;
-  next_due_date: string;
-};
+export type Bill = { name: string; amount: number; currency: string; next_due_date: string };
 export type Alert = { title: string; body: string; url: string; tag: string };
 
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ });
 export const todayKey = (d = new Date()) => dayFmt.format(d);
 export const beirutHour = (d = new Date()) =>
-  Number(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: TZ,
-      hour: "2-digit",
-      hourCycle: "h23",
-    }).format(d),
-  );
-const toUtc = (k: string) => {
-  const [y, m, d] = k.split("-").map(Number);
-  return Date.UTC(y, m - 1, d);
-};
-export const daysUntil = (due: string, today: string) =>
-  Math.round((toUtc(due) - toUtc(today)) / 86400000);
+  Number(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", hourCycle: "h23" }).format(d));
+const toUtc = (k: string) => { const [y, m, d] = k.split("-").map(Number); return Date.UTC(y, m - 1, d); };
+export const daysUntil = (due: string, today: string) => Math.round((toUtc(due) - toUtc(today)) / 86400000);
 
 export function money(amount: number, currency: string) {
   return currency === "LBP"
@@ -68,49 +53,42 @@ export function buildAlert(bills: Bill[], today: string): Alert | null {
     return {
       title: late ? "Bill overdue" : "Bill to pay",
       body: `${b.name}: ${money(b.amount, b.currency)}, ${when(b.days)}.`,
-      url: "/?view=bills",
-      tag: "bills-digest",
+      url: "/?view=bills", tag: "bills-digest",
     };
   }
-  const names =
-    rows
-      .slice(0, 3)
-      .map((b) => b.name)
-      .join(", ") + (rows.length > 3 ? `, +${rows.length - 3} more` : "");
+  const names = rows.slice(0, 3).map((b) => b.name).join(", ") + (rows.length > 3 ? `, +${rows.length - 3} more` : "");
   return {
     title: `${rows.length} bills to pay`,
     body: `${late ? `${late} overdue. ` : ""}${names}.`,
-    url: "/?view=bills",
-    tag: "bills-digest",
+    url: "/?view=bills", tag: "bills-digest",
   };
 }
 
 // ----------------------------------------------------------------- server --
 
-const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json", ...CORS },
-  });
+// The app calls this function from the browser, which first asks permission (CORS). Without these headers
+// the browser blocks the call and the app only says "check that the alert function is deployed".
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
+  "access-control-allow-methods": "POST, OPTIONS",
+};
 
-async function sendTo(
-  admin: ReturnType<typeof createClient>,
-  subs: any[],
-  alert: Alert,
-) {
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...CORS } });
+
+async function sendTo(admin: ReturnType<typeof createClient>, subs: any[], alert: Alert) {
   let sent = 0;
   for (const s of subs) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify(alert),
-        { TTL: 12 * 3600, urgency: "normal" },
+        JSON.stringify(alert), { TTL: 12 * 3600, urgency: "normal" },
       );
       sent++;
     } catch (e: any) {
       // The phone says this address is gone (app removed, alerts switched off): forget it.
-      if (e?.statusCode === 404 || e?.statusCode === 410)
-        await admin.from("push_subscriptions").delete().eq("id", s.id);
+      if (e?.statusCode === 404 || e?.statusCode === 410) await admin.from("push_subscriptions").delete().eq("id", s.id);
       else console.error("push failed", e?.statusCode, e?.body);
     }
   }
@@ -119,85 +97,50 @@ async function sendTo(
 
 if (typeof Deno !== "undefined") {
   Deno.serve(async (req) => {
+    if (req.method === "OPTIONS") {
+      // answer exactly the headers the browser says it will send (newer app versions add some)
+      const asked = req.headers.get("access-control-request-headers");
+      return new Response("ok", { headers: { ...CORS, ...(asked ? { "access-control-allow-headers": asked } : {}), "access-control-max-age": "86400" } });
+    }
+    for (const k of ["VAPID_SUBJECT", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "CRON_SECRET"]) {
+      if (!Deno.env.get(k)) return json({ error: `Secret ${k} is not set on the function` }, 500);
+    }
     const url = Deno.env.get("SUPABASE_URL")!;
-    const admin = createClient(
-      url,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { persistSession: false } },
-    );
-    webpush.setVapidDetails(
-      Deno.env.get("VAPID_SUBJECT")!,
-      Deno.env.get("VAPID_PUBLIC_KEY")!,
-      Deno.env.get("VAPID_PRIVATE_KEY")!,
-    );
+    const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    webpush.setVapidDetails(Deno.env.get("VAPID_SUBJECT")!, Deno.env.get("VAPID_PUBLIC_KEY")!, Deno.env.get("VAPID_PRIVATE_KEY")!);
     const body = await req.json().catch(() => ({}));
 
     // 2. a person testing their own device
     if (body.test) {
-      const token = (req.headers.get("authorization") ?? "").replace(
-        /^Bearer\s+/i,
-        "",
-      );
+      const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
       const { data } = await admin.auth.getUser(token);
       if (!data?.user) return json({ error: "Not signed in" }, 401);
-      const { data: subs } = await admin
-        .from("push_subscriptions")
-        .select("*")
-        .eq("user_id", data.user.id);
-      const sent = await sendTo(admin, subs || [], {
-        title: "Family Wallet",
-        body: "Alerts are working on this phone.",
-        url: "/",
-        tag: "test",
-      });
+      const { data: subs } = await admin.from("push_subscriptions").select("*").eq("user_id", data.user.id);
+      const sent = await sendTo(admin, subs || [], { title: "Family Wallet", body: "Alerts are working on this phone.", url: "/", tag: "test" });
       return json({ sent });
     }
 
     // 1. the morning job
-    if (req.headers.get("x-cron-secret") !== Deno.env.get("CRON_SECRET"))
-      return json({ error: "Not allowed" }, 401);
-    if (!body.force && beirutHour() !== SEND_HOUR)
-      return json({ skipped: "not 09:00 in Beirut" });
+    if (req.headers.get("x-cron-secret") !== Deno.env.get("CRON_SECRET")) return json({ error: "Not allowed" }, 401);
+    if (!body.force && beirutHour() !== SEND_HOUR) return json({ skipped: "not 09:00 in Beirut" });
 
     const today = todayKey();
-    const [
-      { data: subs },
-      { data: members },
-      { data: famBills },
-      { data: myBills },
-    ] = await Promise.all([
+    const [{ data: subs }, { data: members }, { data: famBills }, { data: myBills }] = await Promise.all([
       admin.from("push_subscriptions").select("*"),
-      admin
-        .from("members")
-        .select("id, family_id, role")
-        .is("removed_at", null),
-      admin
-        .from("common_bills")
-        .select("family_id, name, amount, currency, next_due_date")
-        .eq("is_active", true),
-      admin
-        .from("planned_payments")
-        .select("created_by_member_id, name, amount, currency, next_due_date")
-        .eq("is_active", true),
+      admin.from("members").select("id, family_id, role").is("removed_at", null),
+      admin.from("common_bills").select("family_id, name, amount, currency, next_due_date").eq("is_active", true),
+      admin.from("planned_payments").select("created_by_member_id, name, amount, currency, next_due_date").eq("is_active", true),
     ]);
     const roleOf = new Map((members || []).map((m: any) => [m.id, m]));
     const byMember = new Map<string, any[]>();
-    for (const s of subs || []) {
-      if (roleOf.has(s.member_id))
-        byMember.set(s.member_id, [...(byMember.get(s.member_id) || []), s]);
-    }
+    for (const s of subs || []) { if (roleOf.has(s.member_id)) byMember.set(s.member_id, [...(byMember.get(s.member_id) || []), s]); }
 
-    let people = 0,
-      sent = 0;
+    let people = 0, sent = 0;
     for (const [memberId, devices] of byMember) {
       const m = roleOf.get(memberId);
       const bills: Bill[] = [
-        ...(["admin", "superadmin"].includes(m.role)
-          ? (famBills || []).filter((b: any) => b.family_id === m.family_id)
-          : []),
-        ...(myBills || []).filter(
-          (b: any) => b.created_by_member_id === memberId,
-        ),
+        ...(["admin", "superadmin"].includes(m.role) ? (famBills || []).filter((b: any) => b.family_id === m.family_id) : []),
+        ...(myBills || []).filter((b: any) => b.created_by_member_id === memberId),
       ];
       const alert = buildAlert(bills, today);
       if (!alert) continue;
