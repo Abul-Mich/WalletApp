@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createCard, fmtMoney } from "../lib/wallets";
 import CardDetailModal from "./CardDetailModal";
 import { EditSheet } from "../components/RecordFields";
 import { TextInput } from "../components/Field";
 
 export default function CardsSection({
-  familyId, memberId, cards, accounts, members, categories, amAdmin, amSuperadmin, onChanged,
+  familyId, memberId, cards, accounts, members, categories, amAdmin, amSuperadmin, onChanged, newSignal = 0, dock = false,
 }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
   const selectedCard = cards.find((c) => c.id === selectedCardId) || null;
   const [showNewCard, setShowNewCard] = useState(false);
+  // The Family page opens the "New card" sheet from its bottom bar by bumping this counter.
+  useEffect(() => { if (newSignal > 0) setShowNewCard(true); }, [newSignal]);
   const [showArchived, setShowArchived] = useState(false);
   const [name, setName] = useState("");
   const [currency, setCurrency] = useState("USD");
@@ -37,10 +39,10 @@ export default function CardsSection({
   }
 
   return (
-    <section className="card">
-      <div className="card-header-row">
+    <section className={dock ? "fam-cards" : "card"}>
+      <div className={dock ? "sk-sr" : "card-header-row"}>
         <h2>Cards</h2>
-        {amAdmin && (
+        {amAdmin && !dock && (
           <button type="button" className="link-button" onClick={() => setShowNewCard((v) => !v)}>
             {showNewCard ? "Cancel" : "New card"}
           </button>
@@ -72,9 +74,28 @@ export default function CardsSection({
         </EditSheet>
       )}
 
-      {activeCards.length === 0 && !showNewCard && <p className="hint">No shared cards yet.</p>}
+      {activeCards.length === 0 && !showNewCard && (
+        <p className={dock ? "fam-empty" : "hint"}>No shared cards yet. A card is money set aside for one purpose, like groceries or school.</p>
+      )}
 
-      <ul className="card-list">
+      {dock ? (
+        <div className="fam-card-grid">
+          {visibleCards.map((c) => {
+            const a = accounts.cards[c.id];
+            return (
+              <button key={c.id} type="button" className={`fam-card ${c.archived ? "archived" : ""}`} onClick={() => setSelectedCardId(c.id)}>
+                <span className="fam-card-top">
+                  <span className="fam-card-name">{c.name}</span>
+                  <span className="fam-card-cur">{a?.currency || ""}</span>
+                </span>
+                <span className="fam-card-balance">{a ? fmtMoney(a.balance_cache, a.currency) : "—"}</span>
+                {c.archived && <span className="pill-archived">Archived</span>}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <ul className="card-list">
         {visibleCards.map((c) => {
           const a = accounts.cards[c.id];
           return (
@@ -90,6 +111,7 @@ export default function CardsSection({
           );
         })}
       </ul>
+      )}
 
       {archivedCards.length > 0 && (
         <button type="button" className="link-button" onClick={() => setShowArchived((v) => !v)}>

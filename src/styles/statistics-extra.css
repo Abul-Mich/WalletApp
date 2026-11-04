@@ -154,3 +154,113 @@
 .stats-top { align-items: flex-start; justify-content: space-between; }
 .stats-top .period-head { min-width: 0; flex: 1; }
 .stats-top .member-pill { flex: 0 0 auto; margin-top: 2px; }
+
+/* ---- Family page: read at the top, tap at the bottom (tabs + main action docked above the nav) ---- */
+.dashboard:has(.fam-dock) { padding-bottom: calc(230px + env(safe-area-inset-bottom)); }
+.fam-summary {
+  display: flex; flex-direction: column; gap: 14px; padding: 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+.fam-summary-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.fam-label { display: block; font-size: 12px; color: var(--text-muted); }
+.fam-total { display: block; font-size: 32px; font-weight: 700; line-height: 1.1; color: var(--text); }
+.fam-rate { font-size: 12px; color: var(--text-muted); text-align: right; }
+.fam-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.fam-tile { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; background: rgba(0, 0, 0, 0.22); border-radius: 12px; min-width: 0; }
+.fam-tile strong { font-size: 16px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-sub { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-note { margin: -4px 0 0; font-size: 12px; color: var(--text-muted); }
+.fam-budget { display: flex; flex-direction: column; gap: 6px; }
+.fam-budget-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.fam-addpool { align-self: flex-start; min-height: 40px; padding: 0 14px; border-radius: 12px; background: transparent; border: 1px solid var(--border); color: var(--accent-bright); font-size: 13px; font-weight: 600; }
+.fam-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 4px 14px; }
+.fam-list .member-list li { padding: 14px 0; }
+.fam-list .txn-list { margin: 0; }
+
+.fam-dock {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(92px + env(safe-area-inset-bottom));
+  width: calc(100% - 32px); max-width: 448px; box-sizing: border-box; z-index: 45;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 24px;
+  background: rgba(23, 26, 32, 0.82);
+  -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.fam-dock-seg { display: flex; gap: 4px; padding: 4px; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: 14px; }
+.fam-dock-seg button { flex: 1; min-height: 44px; padding: 0 4px; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 500; }
+.fam-dock-seg button[aria-pressed="true"] { background: var(--surface-hover); color: var(--text); font-weight: 600; }
+.fam-dock-action { min-height: 48px; border-radius: 14px; border: 0; background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; }
+.fam-invite-actions { display: flex; flex-direction: column; gap: 8px; }
+@media (hover: hover) {
+  .fam-dock-seg button:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+  .fam-dock-action:hover { background: var(--accent-bright); }
+}
+
+/* ---- Family page: members, cards, shared costs, activity ---- */
+.fam-section-title { margin: 12px 0 4px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+.fam-empty { margin: 8px 0 12px; font-size: 14px; line-height: 1.5; color: var(--text-muted); }
+.fam-chip { min-height: 40px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--accent-bright); font-size: 13px; font-weight: 600; }
+.fam-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.fam-pill { display: inline-flex; gap: 6px; align-items: baseline; padding: 6px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border-soft); font-size: 12.5px; color: var(--text-muted); }
+.fam-pill strong { color: var(--text); font-weight: 600; }
+
+/* Members */
+.fam-members { display: flex; flex-direction: column; gap: 10px; }
+.fam-member { display: flex; align-items: center; gap: 12px; padding: 14px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); }
+.fam-avatar { flex: none; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(91, 141, 239, 0.16); color: var(--accent-bright); font-weight: 700; font-size: 16px; }
+.fam-member-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.fam-member-name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: var(--text); min-width: 0; }
+.fam-member-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-member-money { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.fam-member-money strong { font-size: 16px; font-variant-numeric: tabular-nums; color: var(--text); }
+.fam-member-money span { font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.fam-limit-track { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.fam-limit-bar { height: 100%; border-radius: 3px; background: var(--success); }
+.fam-limit-bar.near { background: var(--warning); }
+.fam-limit-bar.over { background: var(--danger); }
+.fam-limit-text { font-size: 11.5px; color: var(--text-faint); }
+.fam-limit-text.near { color: var(--warning); }
+.fam-limit-text.over { color: var(--danger); }
+
+/* Cards */
+.fam-cards { display: flex; flex-direction: column; gap: 10px; }
+.fam-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fam-card {
+  display: flex; flex-direction: column; align-items: stretch; justify-content: space-between; gap: 18px; min-height: 108px; padding: 14px; text-align: left;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-soft); border-radius: var(--radius-lg);
+}
+.fam-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.fam-card-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fam-card-cur { font-size: 10.5px; letter-spacing: .06em; color: var(--text-faint); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+.fam-card-balance { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fam-card.archived { opacity: .6; }
+@media (hover: hover) { .fam-card:hover { background: var(--surface-hover); } }
+
+/* Shared costs */
+.fam-shared { display: flex; flex-direction: column; gap: 12px; }
+.fam-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; padding: 16px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); }
+.fam-hero-value { display: block; font-size: 28px; font-weight: 700; line-height: 1.1; color: var(--text); }
+.fam-shared .fam-note { margin: 0 4px; }
+
+/* Rows inside Family lists: what it was on the left, the amount on the right */
+.fam-list .txn-list li { padding: 14px 0; }
+.fam-list .txn-list li > div { align-items: flex-start; }
+.fam-list .txn-meta { order: -1; flex: 1; min-width: 0; text-align: left; font-size: 13px; line-height: 1.4; color: var(--text-muted); }
+.fam-list .txn-amount { order: 1; font-size: 15px; }
+.fam-list .load-more { min-height: 48px; border-radius: 14px; }
+
+/* ---- Family page, final: tabs stay at the top, one button ends each section, the nav is the only footer ---- */
+.dashboard:has(.fam-dock) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+.fam-tabs { position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: 8px 16px; background: linear-gradient(var(--bg) 78%, transparent); }
+.fam-tabs-seg { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+.fam-tabs-seg button { flex: 1; min-height: 44px; padding: 0 2px; border: 0; border-radius: 13px; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 500; }
+.fam-tabs-seg button[aria-selected="true"] { background: #2b3a66; color: #fff; font-weight: 700; }
+.fam-body { display: flex; flex-direction: column; gap: 12px; touch-action: pan-y; }
+.fam-end { width: 100%; min-height: 56px; margin-top: 4px; border: 0; border-radius: 16px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; }
+.fam-bills { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 0 16px; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); font-size: 20px; }
+.fam-bills-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.fam-bills-text strong { font-size: 15px; font-weight: 600; }
+.fam-bills-text span { font-size: 12.5px; color: var(--text-muted); font-weight: 400; }
+.fam-bills-text span.soon { color: var(--warning); }
+@media (hover: hover) { .fam-end:hover { background: var(--accent-bright); } .fam-bills:hover { background: var(--surface-hover); } .fam-tabs-seg button:hover { color: var(--text); } }

@@ -20,7 +20,7 @@ import { useHomeSpend, SpentChip, LimitCard } from "./HomeSpend";
 import TransactionHistoryModal from "./TransactionHistoryModal";
 import MeProfileCard from "./MeProfileCard";
 import MoneyHistoryAdmin from "./MoneyHistoryAdmin";
-import FamilyBalanceCard from "./FamilyBalanceCard";
+import FamilyPage from "./FamilyPage";
 import Statistics from "./Statistics";
 import { getMemberSpend, loadIncomeRows, loadAccounts, groupAccounts, latestLbpRate, createInvite, bal } from "../lib/wallets";
 import { getFamilyBudgetSpend } from "../lib/budgets";
@@ -680,7 +680,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} presetPool={addOpts.pool} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -723,115 +723,17 @@ export default function Dashboard({ familyId }) {
           </div>
         </header>
 
-        <FamilyBalanceCard accounts={accounts} rate={rate || 0} familyId={familyId} amAdmin={amAdmin} onChanged={loadWallet} />
-
-        {familyBudgetSpend && (
-          <section className="card">
-            <h2>Family Budget ({familyBudgetSpend.period})</h2>
-            <div className="breakdown-row">
-              <span>Used</span>
-              <span>
-                {formatUsd(familyBudgetSpend.spent)} / {formatUsd(familyBudgetSpend.limit)}
-              </span>
-            </div>
-            <div className="breakdown-bar-track">
-              <div
-                className={`breakdown-bar ${
-                  familyBudgetSpend.isOverLimit
-                    ? "over"
-                    : familyBudgetSpend.isNearLimit
-                      ? "near"
-                      : ""
-                }`}
-                style={{
-                  width: `${Math.min(familyBudgetSpend.percentUsed * 100, 100)}%`,
-                }}
-              />
-            </div>
-            <p className="hint">
-              This is a target the admin set, separate from actual cash above.
-            </p>
-          </section>
-        )}
-
-        <section className="card">
-          <h2>Members ({members.length})</h2>
-          <ul className="member-list">
-            {members.map((m) => (
-              <li key={m.id}>
-                <span>{m.display_name}</span>
-                <span className="member-list-right">
-                  <span className="member-balance">
-                    {formatUsd(bal(accounts.members[m.id]?.USD))} ·{" "}
-                    {formatLbp(bal(accounts.members[m.id]?.LBP))}
-                  </span>
-                  <span className={`badge ${m.role}`}>{m.role}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <CardsSection
-          familyId={familyId}
-          memberId={myMember?.id}
-          cards={cards}
-          accounts={accounts}
-          members={members}
-          categories={categories}
-          amAdmin={amAdmin}
-          amSuperadmin={amSuperadmin}
-          onChanged={() => {
-            loadCards();
-            loadFamilyAndMembers();
-          }}
-        />
-
-        <CommonExpenses
-          familyId={familyId}
-          members={members}
-          categories={categories}
-          amAdmin={amAdmin}
-          accounts={accounts}
-          cards={cards}
-          reloadTrigger={commonReloadCounter}
-          onChanged={loadWallet}
+        <FamilyPage
+          familyId={familyId} myMember={myMember} members={members} memberSpends={memberSpends} allMembers={allMembers} accounts={accounts} rate={rate}
+          amAdmin={amAdmin} amSuperadmin={amSuperadmin} familyBudgetSpend={familyBudgetSpend}
+          cards={cards} categories={categories} transactions={transactions} commonReloadCounter={commonReloadCounter}
+          invite={invite} newInvite={newInvite}
+          loadWallet={loadWallet} loadCards={loadCards} loadFamilyAndMembers={loadFamilyAndMembers}
+          loadTransactions={loadTransactions} loadMyRecentTransactions={loadMyRecentTransactions}
           onOpenBills={() => setView("bills")}
+          onAddSharedCost={() => { setAddOpts({ tab: "expense", pool: true }); setShowAddSheet(true); }}
+          onOpenHistory={() => setShowFamilyHistoryModal(true)}
         />
-
-        <section className="card">
-          <div className="card-header-row">
-            <h2>Members' spending</h2>
-            {transactions.length > 0 && (
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => setShowFamilyHistoryModal(true)}
-              >
-                More
-              </button>
-            )}
-          </div>
-          {transactions.length === 0 && (
-            <p className="hint">No transactions yet.</p>
-          )}
-          <ul className="txn-list">
-            {transactions.slice(0, 8).map((t) => (
-              <TransactionRow
-                key={t.id}
-                t={t}
-                categories={categories}
-                members={allMembers}
-                canManage={t.member_id === myMember?.id || amAdmin}
-                onChanged={() => {
-                  loadTransactions();
-                  loadFamilyAndMembers();
-                  if (myMember?.id) loadMyRecentTransactions(myMember.id);
-                }}
-              />
-            ))}
-          </ul>
-        </section>
 
         {showFamilyHistoryModal && (
           <TransactionHistoryModal
@@ -842,23 +744,6 @@ export default function Dashboard({ familyId }) {
             amAdmin={amAdmin}
             onClose={() => setShowFamilyHistoryModal(false)}
           />
-        )}
-
-        {amAdmin && invite && (
-          <section className="card">
-            <h2>Invite code</h2>
-            <p className="invite-code">{invite.code}</p>
-            <p className="hint">
-              Share this with family members so they can join. A code works once.
-            </p>
-            <button type="button" className="link-button" onClick={newInvite}>New code</button>
-          </section>
-        )}
-        {amAdmin && !invite && (
-          <section className="card">
-            <h2>Invite code</h2>
-            <button type="button" onClick={newInvite}>Create invite code</button>
-          </section>
         )}
 
         <BottomNav
@@ -876,7 +761,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} presetPool={addOpts.pool} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -949,7 +834,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} presetPool={addOpts.pool} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -1012,7 +897,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} presetPool={addOpts.pool} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -1069,7 +954,7 @@ export default function Dashboard({ familyId }) {
             members={members}
             cards={cards}
             amAdmin={amAdmin}
-            initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+            initialTab={addOpts.tab} presetDest={addOpts.dest} presetPool={addOpts.pool} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
             onDone={() => {
               loadFamilyAndMembers();
               loadTransactions();
@@ -1209,7 +1094,7 @@ export default function Dashboard({ familyId }) {
           members={members}
           cards={cards}
           amAdmin={amAdmin}
-          initialTab={addOpts.tab} presetDest={addOpts.dest} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
+          initialTab={addOpts.tab} presetDest={addOpts.dest} presetPool={addOpts.pool} onClose={() => { setShowAddSheet(false); setAddOpts({}); }}
           onDone={() => {
             loadFamilyAndMembers();
             loadTransactions();

@@ -9,7 +9,7 @@ const TABS = [
   { key: "income", label: "Add money" },
 ];
 
-export default function AddActionSheet({ familyId, memberId, categories, accounts, members, cards, amAdmin, limits, initialTab = "expense", presetDest, onClose, onDone }) {
+export default function AddActionSheet({ familyId, memberId, categories, accounts, members, cards, amAdmin, limits, initialTab = "expense", presetDest, presetPool, onClose, onDone }) {
   const [tab, setTab] = useState(initialTab);
 
   function handleDone() {
@@ -37,7 +37,7 @@ export default function AddActionSheet({ familyId, memberId, categories, account
           {tab === "expense" && (
             <TransactionForm
               familyId={familyId} memberId={memberId} categories={categories} accounts={accounts}
-              members={(members || []).filter((m) => !m.removed_at)} cards={cards || []} amAdmin={amAdmin} limits={limits} onDone={handleDone}
+              members={(members || []).filter((m) => !m.removed_at)} cards={cards || []} amAdmin={amAdmin} presetPool={presetPool} limits={limits} onDone={handleDone}
             />
           )}
           {tab === "income" && (
