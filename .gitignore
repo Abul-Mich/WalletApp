@@ -27,3 +27,22 @@ yarn-error.log*
 *.zip
 
 supabase/push_schedule.example.env.sql
+# Vercel and Supabase CLI local state (project links, temp files)
+.vercel/
+supabase/.temp/
+supabase/.branches/
+
+# Database exports and backups (they contain real family data)
+*.dump
+*.backup
+backups/
+exports/
+
+# Any filled-in copy of the alert schedule or other local secrets file
+*.secret.sql
+.env*.local
+
+# Misc
+coverage/
+Thumbs.db
+*.log
