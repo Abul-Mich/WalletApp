@@ -19,6 +19,7 @@ import PocketsCard from "./PocketsCard";
 import { useHomeSpend, SpentChip, LimitCard } from "./HomeSpend";
 import TransactionHistoryModal from "./TransactionHistoryModal";
 import MeProfileCard from "./MeProfileCard";
+import DeleteAccount from "../components/DeleteAccount";
 import MoneyHistoryAdmin from "./MoneyHistoryAdmin";
 import FamilyPage from "./FamilyPage";
 import Statistics from "./Statistics";
@@ -818,6 +819,8 @@ export default function Dashboard({ familyId }) {
         <button className="signout" onClick={() => supabase.auth.signOut()}>
           Sign Out
         </button>
+
+        <DeleteAccount familyName={family?.name} />
 
         <BottomNav
           active="me"
