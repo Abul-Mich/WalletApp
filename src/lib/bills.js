@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { periodStartIso } from "./beirutTime";
 import {
-  latestLbpRate, createExpense, createCommonBill, updateCommonBill, deleteCommonBill, payCommonBill,
+  latestLbpRate, createExpense, createCardSpend, createCommonBill, updateCommonBill, deleteCommonBill, payCommonBill,
 } from "./wallets";
 
 // One list for every bill: family bills (common_bills, admins add and pay them from the pool or a
-// card) and personal bills (planned_payments created by the member, paid from their own wallet).
+// card) and personal bills (planned_payments created by the member, paid from their own wallet or a card).
 // Dates are plain "YYYY-MM-DD" keys on the Beirut calendar, so "due today" never shifts with the phone's time zone.
 
 const TZ = "Asia/Beirut";
@@ -158,17 +158,25 @@ export async function deleteBill(item) {
 
 // Family bill: recorded as a family cost from the pool or a card (admins). Personal bill: a normal
 // expense from the member's own wallet, then the due date moves on (or the bill ends if one-time).
-export async function payBill(item, { amount, accountId = null, lbpPerUsd = null, memberId }) {
+export async function payBill(item, { amount, accountId = null, cardId = null, lbpPerUsd = null, memberId }) {
   if (item.scope === "family") {
     return payCommonBill({ billId: item.id, amount, accountId, lbpPerUsd: item.currency === "LBP" ? lbpPerUsd : null });
   }
   if (item.currency === "LBP" && !lbpPerUsd) throw new Error("Enter the exchange rate (LBP per $1).");
-  await createExpense({
-    memberId, categoryId: item.categoryId, note: `Bill: ${item.name}`,
-    legs: [{ currency: item.currency, amount: -amount }],
-    lbpPerUsd: item.currency === "LBP" ? lbpPerUsd : null,
-    originalAmount: amount, originalCurrency: item.currency,
-  });
+  if (cardId) {
+    // Paid from a card: a card spend tagged to this member, so it counts toward their limit like any card spend.
+    await createCardSpend({
+      cardId, amount, note: `Bill: ${item.name}`, lbpPerUsd: item.currency === "LBP" ? lbpPerUsd : null,
+      taggedMemberId: memberId, categoryId: item.categoryId,
+    });
+  } else {
+    await createExpense({
+      memberId, categoryId: item.categoryId, note: `Bill: ${item.name}`,
+      legs: [{ currency: item.currency, amount: -amount }],
+      lbpPerUsd: item.currency === "LBP" ? lbpPerUsd : null,
+      originalAmount: amount, originalCurrency: item.currency,
+    });
+  }
   const patch = item.recurrence === "one_time" ? { is_active: false } : { next_due_date: nextDueKey(item.due, item.recurrence) };
   const { error } = await supabase.from("planned_payments").update(patch).eq("id", item.id);
   if (error) throw new Error(`Paid, but the bill could not be moved on: ${error.message}`);

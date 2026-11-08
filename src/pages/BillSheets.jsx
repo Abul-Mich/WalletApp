@@ -30,8 +30,10 @@ function PayBillSheet({ bill, accounts, cards, memberId, amAdmin, familyId, defa
   }, []);
 
   const wallet = accounts?.members?.[memberId]?.[cur];
+  const cardSources = (cards || []).filter((k) => !k.archived && accounts?.cards?.[k.id]?.currency === cur)
+    .map((k) => ({ id: accounts.cards[k.id].id, cardId: k.id, name: k.name, sub: "Card", balance: bal(accounts.cards[k.id]) }));
   const sources = bill.scope === "mine"
-    ? [{ id: wallet?.id, name: "My main wallet", sub: "Cash in hand", balance: bal(wallet) }]
+    ? [{ id: wallet?.id, name: "My main wallet", sub: "Cash in hand", balance: bal(wallet) }, ...cardSources]
     : [
         ...(accounts?.pool?.[cur] ? [{ id: "", name: "Family pool", sub: "Admin only", balance: bal(accounts.pool[cur]) }] : []),
         ...(cards || []).filter((k) => !k.archived && accounts?.cards?.[k.id]?.currency === cur)
@@ -50,7 +52,7 @@ function PayBillSheet({ bill, accounts, cards, memberId, amAdmin, familyId, defa
     if (!chosen || !enough(chosen)) return setError(`Not enough money in ${chosen?.name || "that wallet"}.`);
     setBusy(true);
     try {
-      await payBill(bill, { amount: amt, accountId: chosen.id || null, lbpPerUsd: cur === "LBP" ? rateNum : null, memberId });
+      await payBill(bill, { amount: amt, accountId: chosen.id || null, cardId: chosen.cardId || null, lbpPerUsd: cur === "LBP" ? rateNum : null, memberId });
       onDone();
     } catch (err) {
       setError(err.message);
@@ -195,7 +197,7 @@ function AddBillSheet({ familyId, memberId, categories, members, amAdmin, preset
                 <button type="button" className={family ? "on" : ""} aria-pressed={family} onClick={() => setScope("family")}>Family</button>
               </div>
               <span className="sf-muted sf-small" style={{ marginTop: 8 }}>
-                {family ? "Everyone in the family sees it. Paid by an admin from the pool or a card." : "Only you see it. Paid from your own wallet."}
+                {family ? "Everyone in the family sees it. Paid by an admin from the pool or a card." : "Only you see it. Paid from your wallet or a card."}
               </span>
             </div>
           )}
